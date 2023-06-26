@@ -10,13 +10,13 @@ vexpr supports numpy, pytorch, and JAX.
 *Example usage:*
 
 ```python
-import vexpr.numpy as vp
+import vexpr.numpy as vp  # can subsitute with vexpr.torch or vexpr.jax
 
 # Equivalent to
 # def f(x1, x2, w1, w2):
 #     return (w1 * distance(x1[[0, 1, 2], x2[[0, 1, 2]]])
 #             + w2 * distance(x1[[0, 3, 4], x2[[0, 3, 4]]]))
-expr = vp.Sum([
+expr = vp.Sum(
     vp.Multiply([
         vp.Symbol("w1"),
         vp.Distance(
@@ -31,21 +31,11 @@ expr = vp.Sum([
              vp.SelectFromSymbol("x2", [0, 3, 4])]
         )
     ]),
-])
-
-# Evaluation
-print(expr({
-    "w1": 0.75,
-    "w2": 0.25,
-    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
-}))
-# Output:
-# 0.656  TODO actually run this
+)
 
 print(expr)
 # Output: a data structure showing the original expression
-# Sum([
+# Sum(
 #     Multiply([
 #         Symbol("w1"),
 #         Distance(
@@ -60,14 +50,24 @@ print(expr)
 #              SelectFromSymbol("x2", [0, 3, 4])]
 #         )
 #     ]),
-# ])
+# )
+
+# Evaluation
+print(expr({
+    "w1": 0.75,
+    "w2": 0.25,
+    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+}))
+# Output:
+# 0.17320508075688773
 
 expr_vectorized = expr.vectorize()
 
 print(expr_vectorized)
 # Output: An equivalent expression with fewer commands.
 # This expression would have been error-prone to write manually.
-# VectorSum([
+# VectorSum(
 #     Multiply([
 #         Stack([Symbol("w1"), Symbol("w2")]),
 #         Distance(
@@ -76,7 +76,17 @@ print(expr_vectorized)
 #             lengths=[3, 3],
 #         )
 #     ]),
-# ])
+# )
+
+# Evaluation
+print(expr_vectorized({
+    "w1": 0.75,
+    "w2": 0.25,
+    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+}))
+# Output:
+# 0.17320508075688773
 
 # Partial evaluation
 inference_expr = expr_vectorized.partial_evaluate({
@@ -86,7 +96,7 @@ inference_expr = expr_vectorized.partial_evaluate({
 
 print(inference_expr)
 # Output: A faster expression that no longer has to build up an np.array on every execution.
-# VectorSum([
+# VectorSum(
 #     Multiply([
 #         np.array([0.70, 0.30]),
 #         Distance(
@@ -95,10 +105,26 @@ print(inference_expr)
 #             lengths=[3, 3],
 #         )
 #     ]),
-# ])
+# )
+
+# Evaluation
+print(inference_expr({
+    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+}))
+# Output:
+# 0.17320508075688773
 ```
 
 ## Installation
+
+Until official release, it is better to clone the repo and run:
+
+```
+python setup.py develop
+```
+
+But an outdated version is available via `pip install`:
 
 ```
 pip install vexpr

@@ -1,6 +1,7 @@
 from functools import partial
 
 import numpy as np
+import scipy
 
 import vexpr.base
 from vexpr.base import CannotVectorize, ArrayShape
@@ -34,10 +35,6 @@ def to_shape(x):
         return ArrayShape(x.shape)
     else:
         return ArrayShape(())
-
-
-def pytree_skeleton(tree):
-    return tree_map(lambda x: None, tree)
 
 
 class Sum(Expression):
@@ -158,7 +155,8 @@ class VectorizedSum(Expression):
                                 if at_indices is not None
                                 else ())
         return_shape = tree_map(lambda _: data_shape, vector)
-        super().__init__(vector, return_shape=return_shape)
+        super().__init__(vector, return_shape=return_shape,
+                         at_indices=at_indices)
 
     def compute(self, symbols, vector):
         if self.at_indices is not None:
@@ -225,7 +223,8 @@ class Multiply(Expression):
 
         return_shape = tree_map(get_return_shape, lhs_shape, rhs_shape)
 
-        super().__init__(operands, return_shape=return_shape)
+        super().__init__(operands, return_shape=return_shape,
+                         lift_shuffle_from=lift_shuffle_from)
         self.lift_shuffle_from = lift_shuffle_from
 
     def compute(self, symbols, operands):
@@ -413,27 +412,6 @@ def reduction_vectorize(cls, vectorized_cls, *instances):
     return vectorized_cls(vectorized_children, at_indices=at_indices)
 
 
-# def vectorize_operands_separately(cls, *instances):
-#     operand_lists = [[] for _ in range(len(instances[0].operands))]
-
-#     for instance in instances:
-#         if isinstance(instance, cls):
-#             # eat the instance, since we are incorporating it into a
-#             # vectorized operation
-#             operands = instance.operands
-#         else:
-#             # don't eat the instance, pass it through an identity function.
-#             operands = cls.identity_args(instance)
-
-#         for operand_list, operand in zip(operand_lists, operands):
-#             operand_list.append(operand)
-
-#     vectorized_operands = tuple(vectorize(*operand_list)
-#                                 for operand_list in operand_lists)
-
-#     return vectorized_operands
-
-
 class Product(Expression):
     def __init__(self, *operands):
         operands2 = []
@@ -477,7 +455,8 @@ class VectorizedProduct(Expression):
                                 if at_indices is not None
                                 else ())
         return_shape = tree_map(lambda _: data_shape, vector)
-        super().__init__(vector, return_shape=return_shape)
+        super().__init__(vector, return_shape=return_shape,
+                         at_indices=at_indices)
 
     def compute(self, symbols, arr):
         if self.at_indices is not None:
@@ -676,7 +655,7 @@ class Shuffle(Expression):
         return_shape = tree_map(lambda _: data_shape,
                                 vector)
 
-        super().__init__(vector, return_shape=return_shape)
+        super().__init__(vector, return_shape=return_shape, indices=indices)
         self.indices = np.array(indices)
 
     def compute(self, symbols, arr):
@@ -705,7 +684,8 @@ class Symbol(Expression):
     def __init__(self, name, data_shape=ArrayShape(())):
         return_shape = tree_map(lambda _: data_shape,
                                 name)
-        super().__init__(return_shape=return_shape)
+        super().__init__(return_shape=return_shape, name=name,
+                         data_shape=data_shape)
         self.name = name
 
     def _partial_evaluate(self, symbols):
@@ -738,7 +718,7 @@ class Symbol(Expression):
 
 
 class CDist(Expression):
-    def __init__(self, x1x2, metric="euclidean", split_lengths=None):
+    def __init__(self, x1x2, metric="euclidean", split_indices=None):
         """
         x1x2 is either a list/tuple containing (x1, x2), or an expression
         that returns (x1, x2).
@@ -747,24 +727,30 @@ class CDist(Expression):
         if x1_data_shape != x2_data_shape:
             raise ValueError("Expected same shapes, got "
                              f"{x1_data_shape} and {x2_data_shape}")
-        data_shape = ArrayShape((len(split_lengths),)
-                                if split_lengths is not None
+        data_shape = ArrayShape((len(split_indices) + 1,)
+                                if split_indices is not None
                                 else ())
         return_shape = tree_map(lambda _: data_shape,
                                 x1_data_shape)
-        super().__init__(x1x2, return_shape=return_shape)
+        super().__init__(x1x2, return_shape=return_shape,
+                         split_indices=split_indices)
         self.metric = metric
-        self.split_lengths = split_lengths
+        self.split_indices = split_indices
 
     def compute(self, symbols, x1x2):
         x1, x2 = x1x2
-        if self.split_lengths is None:
+        if x1.ndim == 1:
+            x1 = x1[None, :]
+        if x2.ndim == 1:
+            x2 = x2[None, :]
+
+        if self.split_indices is None:
             return scipy.spatial.distance.cdist(x1, x2, self.metric)
         else:
             # TODO implement vectorized version for numpy
             return np.stack([scipy.spatial.distance.cdist(x1_, x2_, self.metric)
-                             for x1_, x2_ in zip(x1.split(self.split_lengths),
-                                                 x2.split(self.split_lengths))],
+                             for x1_, x2_ in zip(np.split(x1, self.split_indices, axis=-1),
+                                                 np.split(x2, self.split_indices, axis=-1))],
                             axis=-1)
 
     @classmethod
@@ -784,12 +770,14 @@ class CDist(Expression):
             if split_lengths1 != split_lengths2:
                 raise ValueError("Expected same shape", split_lengths1,
                                  split_lengths2)
-            split_lengths = split_lengths1
+
+            # convert split lengths to split indices
+            split_indices = np.cumsum(split_lengths1[:-1])
 
             vectorized_children = vectorize(*(inst.operands[0]
                                               for inst in instances))
             return cls(vectorized_children,
-                       split_lengths=split_lengths)
+                       split_indices=split_indices)
         else:
             if not allow_partial:
                 raise CannotVectorize()
@@ -825,17 +813,23 @@ class CDist(Expression):
     def lift_shuffle(self):
         return self, None
 
+    def sexpr(self):
+        ret = super().sexpr()
+        if self.split_indices is not None:
+            ret = ret + (self.split_indices.tolist(),)
+        return ret
+
 
 class CDistEuclidean(CDist):
-    def __init__(self, operands, split_lengths=None):
+    def __init__(self, operands, split_indices=None):
         super().__init__(operands, metric="euclidean",
-                         split_lengths=split_lengths)
+                         split_indices=split_indices)
 
 
 class CDistCityBlock(CDist):
-    def __init__(self, operands, split_lengths=None):
+    def __init__(self, operands, split_indices=None):
         super().__init__(operands, metric="cityblock",
-                         split_lengths=split_lengths)
+                         split_indices=split_indices)
 
 
 class SelectFromSymbol(Expression):
@@ -843,7 +837,8 @@ class SelectFromSymbol(Expression):
         shape = ArrayShape([len(indices)])
         return_shape = tree_map(lambda _: shape,
                                 name)
-        super().__init__(return_shape=return_shape)
+        super().__init__(return_shape=return_shape, name=name,
+                         indices=indices)
         self.name = name
         self.indices = np.array(indices)
 
@@ -887,3 +882,10 @@ class ArrayMean(Expression):
 
     def compute(self, symbols, array):
         return array.mean()
+
+
+class Distance(CDistEuclidean):
+    def compute(self, symbols, x1x2):
+        # Could switch to scipy.spatial.distance.euclidean. But the main purpose
+        # of this class is to be useful for the README.
+        return super().compute(symbols, x1x2)[0][0]

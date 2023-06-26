@@ -91,10 +91,10 @@ def test_hstack_multiple_f_no_passthrough():
         vp.Concatenate(
             vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                              split_lengths=[2, 2]),
+                              split_indices=[2, 2]),
             vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                              split_lengths=[2, 2]),
+                              split_indices=[2, 2]),
         ),
         [0, 2, 1, 3]
     )
@@ -128,10 +128,10 @@ def test_hstack_product_multiple_f_no_passthrough():
         vp.Concatenate(
             vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                              split_lengths=[2, 2]),
+                              split_indices=[2, 2]),
             vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                              split_lengths=[2, 2]),
+                              split_indices=[2, 2]),
         ),
         [0, 1, 0, 1]
     )
@@ -169,10 +169,10 @@ def test_shuffle_multiply():
             vp.Concatenate(
                 vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                    vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                                  split_lengths=[2, 2]),
+                                  split_indices=[2, 2]),
                 vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                    vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                                  split_lengths=[2, 2]),
+                                  split_indices=[2, 2]),
             ),
         )),
         [0, 1, 0, 1]
@@ -213,6 +213,113 @@ def test_kernel():
     vectorized = expr.vectorize()
 
 
+def test_readme():
+    import vexpr.numpy as vp  # can subsitute with vexpr.torch or vexpr.jax
+
+    # Equivalent to
+    # def f(x1, x2, w1, w2):
+    #     return (w1 * distance(x1[[0, 1, 2], x2[[0, 1, 2]]])
+    #             + w2 * distance(x1[[0, 3, 4], x2[[0, 3, 4]]]))
+    expr = vp.Sum(
+        vp.Multiply([
+            vp.Symbol("w1"),
+            vp.Distance(
+                [vp.SelectFromSymbol("x1", [0, 1, 2]),
+                 vp.SelectFromSymbol("x2", [0, 1, 2])]
+            )
+        ]),
+        vp.Multiply([
+            vp.Symbol("w2"),
+            vp.Distance(
+                [vp.SelectFromSymbol("x1", [0, 3, 4]),
+                 vp.SelectFromSymbol("x2", [0, 3, 4])]
+            )
+        ]),
+    )
+
+    # Evaluation
+    print(expr({
+        "w1": 0.75,
+        "w2": 0.25,
+        "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+        "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+    }))
+    # Output:
+    # 0.17320508075688773
+
+    print(expr)
+    # Output: a data structure showing the original expression
+    # Sum(
+    #     Multiply([
+    #         Symbol("w1"),
+    #         Distance(
+    #             [SelectFromSymbol("x1", [0, 1, 2]),
+    #              SelectFromSymbol("x2", [0, 1, 2])]
+    #         )
+    #     ]),
+    #     Multiply([
+    #         Symbol("w2"),
+    #         Distance(
+    #             [SelectFromSymbol("x1", [0, 3, 4]),
+    #              SelectFromSymbol("x2", [0, 3, 4])]
+    #         )
+    #     ]),
+    # )
+
+    expr_vectorized = expr.vectorize()
+
+    print(expr_vectorized)
+    # Output: An equivalent expression with fewer commands.
+    # This expression would have been error-prone to write manually.
+    # VectorSum(
+    #     Multiply([
+    #         Stack([Symbol("w1"), Symbol("w2")]),
+    #         Distance(
+    #             [SelectFromSymbol("x1", [0, 1, 2, 0, 3, 4]),
+    #              SelectFromSymbol("x2", [0, 1, 2, 0, 3, 4])],
+    #             lengths=[3, 3],
+    #         )
+    #     ]),
+    # )
+
+    # Evaluation
+    print(expr_vectorized({
+        "w1": 0.75,
+        "w2": 0.25,
+        "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+        "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+    }))
+    # Output:
+    # 0.17320508075688773
+
+    # Partial evaluation
+    inference_expr = expr_vectorized.partial_evaluate({
+        "w1": 0.75,
+        "w2": 0.25,
+    })
+
+    print(inference_expr)
+    # Output: A faster expression that no longer has to build up an np.array on every execution.
+    # VectorSum(
+    #     Multiply([
+    #         np.array([0.75, 0.25]),
+    #         Distance(
+    #             [SelectFromSymbol("x1", [0, 1, 2, 0, 3, 4]),
+    #              SelectFromSymbol("x2", [0, 1, 2, 0, 3, 4])],
+    #             lengths=[3, 3],
+    #         )
+    #     ]),
+    # )
+
+    # Evaluation
+    print(inference_expr({
+        "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
+        "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
+    }))
+    # Output:
+    # 0.17320508075688773
+
+
 if __name__ == "__main__":
     test1()
     test1_truth()
@@ -221,3 +328,4 @@ if __name__ == "__main__":
     test_hstack_product_multiple_f_no_passthrough()
     test_shuffle_multiply()
     test_kernel()
+    test_readme()

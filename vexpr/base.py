@@ -5,7 +5,7 @@ from jax.tree_util import tree_map, tree_leaves
 
 
 class Expression(abc.ABC):
-    def __init__(self, *operands, return_shape=None):
+    def __init__(self, *operands, return_shape=None, **clone_kwargs):
         """
         An expression has a list of operands, each of which may be a value
         or an expression.
@@ -15,6 +15,7 @@ class Expression(abc.ABC):
         if return_shape is None:
             raise ValueError("Must specify return_shape")
         self.return_shape = return_shape
+        self.clone_kwargs = clone_kwargs
 
         shape, *rest = tree_leaves(return_shape)
         if not all(s == shape for s in rest):
@@ -57,7 +58,7 @@ class Expression(abc.ABC):
         return self.compute(symbols, *operands)
 
     def clone(self, *operands):
-        return type(self)(*operands)
+        return type(self)(*operands, **self.clone_kwargs)
 
     def apply(self, f):
         """
