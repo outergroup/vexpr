@@ -36,20 +36,20 @@ expr = vp.Sum(
 print(expr)
 # Output: a data structure showing the original expression
 # Sum(
-#     Multiply([
-#         Symbol("w1"),
-#         Distance(
-#             [SelectFromSymbol("x1", [0, 1, 2]),
-#              SelectFromSymbol("x2", [0, 1, 2])]
-#         )
-#     ]),
-#     Multiply([
-#         Symbol("w2"),
-#         Distance(
-#             [SelectFromSymbol("x1", [0, 3, 4]),
-#              SelectFromSymbol("x2", [0, 3, 4])]
-#         )
-#     ]),
+#   Multiply(
+#     [Symbol(name='w1'),
+#      Distance(
+#       [SelectFromSymbol(name='x1', indices=[0, 1, 2]),
+#        SelectFromSymbol(name='x2', indices=[0, 1, 2])],
+#     )],
+#   ),
+#   Multiply(
+#     [Symbol(name='w2'),
+#      Distance(
+#       [SelectFromSymbol(name='x1', indices=[0, 3, 4]),
+#        SelectFromSymbol(name='x2', indices=[0, 3, 4])],
+#     )],
+#   ),
 # )
 
 # Evaluation
@@ -67,15 +67,18 @@ expr_vectorized = expr.vectorize()
 print(expr_vectorized)
 # Output: An equivalent expression with fewer commands.
 # This expression would have been error-prone to write manually.
-# VectorSum(
-#     Multiply([
-#         Stack([Symbol("w1"), Symbol("w2")]),
-#         Distance(
-#             [SelectFromSymbol("x1", [0, 1, 2, 0, 3, 4]),
-#              SelectFromSymbol("x2", [0, 1, 2, 0, 3, 4])],
-#             lengths=[3, 3],
-#         )
-#     ]),
+# VectorizedSum(
+#   Multiply(
+#     (Stack(
+#       Symbol(name='w1'),
+#       Symbol(name='w2'),
+#     ),
+#      Distance(
+#       (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
+#        SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
+#       split_indices=[3]
+#     )),
+#   ),
 # )
 
 # Evaluation
@@ -96,15 +99,15 @@ inference_expr = expr_vectorized.partial_evaluate({
 
 print(inference_expr)
 # Output: A faster expression that no longer has to build up an np.array on every execution.
-# VectorSum(
-#     Multiply([
-#         np.array([0.70, 0.30]),
-#         Distance(
-#             [SelectFromSymbol("x1", [0, 1, 2, 0, 3, 4]),
-#              SelectFromSymbol("x2", [0, 1, 2, 0, 3, 4])],
-#             lengths=[3, 3],
-#         )
-#     ]),
+# VectorizedSum(
+#   Multiply(
+#     (array([0.75, 0.25]),
+#      Distance(
+#       (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
+#        SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
+#       split_indices=[3]
+#     )),
+#   ),
 # )
 
 # Evaluation
@@ -158,4 +161,4 @@ vexpr embraces functional programming, which makes it work automatically with `j
 
 ## Conventions
 
-Some vexpr functions like `Sum` use convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So vectorizing `f(arg1, arg2)` and `f(arg3, arg4)` might give you `vectorized_f(np.array([arg1, arg2, arg3, arg4]), sizes=[2, 2])`, while vectorizing `f((arg1, arg2))` and `f((arg3, arg4))` might give you `f((np.array([arg1, arg3]), np.array([arg2, arg4])))`. On top of this, in either calling convention the args themselves may be pytrees. For example, `Sum({"a": 42, "b": 43}, {"a": 2, "b": 3})` would be vectorized to `VectorSum({"a": np.array([42, 2]), "b": np.array([43, 3])})`, again following the rule that vectorization preserves pytree structure.
+Some vexpr functions like `Sum` use convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So vectorizing `f(arg1, arg2)` and `f(arg3, arg4)` might give you `vectorized_f(np.array([arg1, arg2, arg3, arg4]), sizes=[2, 2])`, while vectorizing `f((arg1, arg2))` and `f((arg3, arg4))` might give you `f((np.array([arg1, arg3]), np.array([arg2, arg4])))`. On top of this, in either calling convention the args themselves may be pytrees. For example, `Sum({"a": 42, "b": 43}, {"a": 2, "b": 3})` would be vectorized to `VectorizedSum({"a": np.array([42, 2]), "b": np.array([43, 3])})`, again following the rule that vectorization preserves pytree structure.

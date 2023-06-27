@@ -155,8 +155,7 @@ class VectorizedSum(Expression):
                                 if at_indices is not None
                                 else ())
         return_shape = tree_map(lambda _: data_shape, vector)
-        super().__init__(vector, return_shape=return_shape,
-                         at_indices=at_indices)
+        super().__init__(vector, return_shape=return_shape)
 
     def compute(self, symbols, vector):
         if self.at_indices is not None:
@@ -171,10 +170,15 @@ class VectorizedSum(Expression):
         np.add.at(out, (..., self.at_indices), arr)
         return out
 
-    def sexpr(self):
-        ret = super().sexpr()
+    def extra_clone_kwargs(self):
+        ret = super().extra_clone_kwargs()
+
         if self.at_indices is not None:
-            ret = ret + (self.at_indices.tolist(),)
+            ret = {
+                **ret,
+                "at_indices": self.at_indices.tolist(),
+            }
+
         return ret
 
     @classmethod
@@ -217,14 +221,13 @@ class Multiply(Expression):
             elif len(rhs_data_shape) == 0:
                 return lhs_data_shape
             else:
-                if rhs_data_shape != lhs_data_shape:
-                    raise ValueError((rhs_data_shape, rhs_data_shape))
+                if lhs_data_shape != rhs_data_shape:
+                    raise ValueError((lhs_data_shape, rhs_data_shape))
                 return lhs_data_shape
 
         return_shape = tree_map(get_return_shape, lhs_shape, rhs_shape)
 
-        super().__init__(operands, return_shape=return_shape,
-                         lift_shuffle_from=lift_shuffle_from)
+        super().__init__(operands, return_shape=return_shape)
         self.lift_shuffle_from = lift_shuffle_from
 
     def compute(self, symbols, operands):
@@ -455,8 +458,7 @@ class VectorizedProduct(Expression):
                                 if at_indices is not None
                                 else ())
         return_shape = tree_map(lambda _: data_shape, vector)
-        super().__init__(vector, return_shape=return_shape,
-                         at_indices=at_indices)
+        super().__init__(vector, return_shape=return_shape)
 
     def compute(self, symbols, arr):
         if self.at_indices is not None:
@@ -467,10 +469,15 @@ class VectorizedProduct(Expression):
         else:
             return arr.prod(axis=-1)
 
-    def sexpr(self):
-        ret = super().sexpr()
+    def extra_clone_kwargs(self):
+        ret = super().extra_clone_kwargs()
+
         if self.at_indices is not None:
-            ret = ret + (self.at_indices.tolist(),)
+            ret = {
+                **ret,
+                "at_indices": self.at_indices.tolist(),
+            }
+
         return ret
 
     @classmethod
@@ -655,7 +662,7 @@ class Shuffle(Expression):
         return_shape = tree_map(lambda _: data_shape,
                                 vector)
 
-        super().__init__(vector, return_shape=return_shape, indices=indices)
+        super().__init__(vector, return_shape=return_shape)
         self.indices = np.array(indices)
 
     def compute(self, symbols, arr):
@@ -669,8 +676,16 @@ class Shuffle(Expression):
         # remove self from the tree
         return self.operands[0], self.indices
 
-    def sexpr(self) -> tuple:
-        return super().sexpr() + (self.indices.tolist(),)
+    def extra_clone_kwargs(self):
+        ret = super().extra_clone_kwargs()
+
+        if self.indices is not None:
+            ret = {
+                **ret,
+                "indices": self.indices.tolist(),
+            }
+
+        return ret
 
 
 def shuffle(vector, indices):
@@ -684,8 +699,7 @@ class Symbol(Expression):
     def __init__(self, name, data_shape=ArrayShape(())):
         return_shape = tree_map(lambda _: data_shape,
                                 name)
-        super().__init__(return_shape=return_shape, name=name,
-                         data_shape=data_shape)
+        super().__init__(return_shape=return_shape)
         self.name = name
 
     def _partial_evaluate(self, symbols):
@@ -697,8 +711,11 @@ class Symbol(Expression):
     def compute(self, symbols):
         return symbols[self.name]
 
-    def sexpr(self):
-        return ("Symbol", self.name)
+    def extra_clone_kwargs(self):
+        return {
+            **super().extra_clone_kwargs(),
+            "name": self.name,
+        }
 
     def __getitem__(self, indices):
         # Rather than creating a separate Select node, fuse it with the Symbol
@@ -732,10 +749,11 @@ class CDist(Expression):
                                 else ())
         return_shape = tree_map(lambda _: data_shape,
                                 x1_data_shape)
-        super().__init__(x1x2, return_shape=return_shape,
-                         split_indices=split_indices)
+        super().__init__(x1x2, return_shape=return_shape)
         self.metric = metric
-        self.split_indices = split_indices
+        self.split_indices = (np.array(split_indices)
+                              if split_indices is not None
+                              else None)
 
     def compute(self, symbols, x1x2):
         x1, x2 = x1x2
@@ -813,12 +831,16 @@ class CDist(Expression):
     def lift_shuffle(self):
         return self, None
 
-    def sexpr(self):
-        ret = super().sexpr()
-        if self.split_indices is not None:
-            ret = ret + (self.split_indices.tolist(),)
-        return ret
+    def extra_clone_kwargs(self):
+        ret = super().extra_clone_kwargs()
 
+        if self.split_indices is not None:
+            ret = {
+                **ret,
+                "split_indices": self.split_indices.tolist(),
+            }
+
+        return ret
 
 class CDistEuclidean(CDist):
     def __init__(self, operands, split_indices=None):
@@ -837,8 +859,7 @@ class SelectFromSymbol(Expression):
         shape = ArrayShape([len(indices)])
         return_shape = tree_map(lambda _: shape,
                                 name)
-        super().__init__(return_shape=return_shape, name=name,
-                         indices=indices)
+        super().__init__(return_shape=return_shape)
         self.name = name
         self.indices = np.array(indices)
 
@@ -855,8 +876,12 @@ class SelectFromSymbol(Expression):
     def clone(self):
         return type(self)(self.name, self.indices)
 
-    def sexpr(self):
-        return ("SelectFromSymbol", self.name, self.indices.tolist())
+    def extra_clone_kwargs(self):
+        return {
+            **super().extra_clone_kwargs(),
+            "name": self.name,
+            "indices": self.indices.tolist(),
+        }
 
     def lift_shuffle(self):
         return self, None

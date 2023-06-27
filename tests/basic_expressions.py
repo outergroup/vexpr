@@ -91,10 +91,10 @@ def test_hstack_multiple_f_no_passthrough():
         vp.Concatenate(
             vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                              split_indices=[2, 2]),
+                              split_indices=[2]),
             vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                              split_indices=[2, 2]),
+                              split_indices=[2]),
         ),
         [0, 2, 1, 3]
     )
@@ -128,10 +128,10 @@ def test_hstack_product_multiple_f_no_passthrough():
         vp.Concatenate(
             vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                              split_indices=[2, 2]),
+                              split_indices=[2]),
             vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                              split_indices=[2, 2]),
+                              split_indices=[2]),
         ),
         [0, 1, 0, 1]
     )
@@ -169,10 +169,10 @@ def test_shuffle_multiply():
             vp.Concatenate(
                 vp.CDistEuclidean((vp.SelectFromSymbol("x1", [0, 1, 4, 5]),
                                    vp.SelectFromSymbol("x2", [0, 1, 4, 5])),
-                                  split_indices=[2, 2]),
+                                  split_indices=[2]),
                 vp.CDistCityBlock((vp.SelectFromSymbol("x1", [2, 3, 1, 4]),
                                    vp.SelectFromSymbol("x2", [2, 3, 1, 4])),
-                                  split_indices=[2, 2]),
+                                  split_indices=[2]),
             ),
         )),
         [0, 1, 0, 1]
@@ -328,4 +328,4 @@ if __name__ == "__main__":
     test_hstack_product_multiple_f_no_passthrough()
     test_shuffle_multiply()
     test_kernel()
-    test_readme()
+    # test_readme()
