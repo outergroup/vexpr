@@ -1,13 +1,22 @@
-# vexpr
+# Vexpr
 
-vexpr is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
+Vexpr (pronounced "vexper") is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
 
 - **Vectorization:** given a human-written expression, return an equivalent expression that uses parallel, vectorized operations
 - **Partial evaluation:** given an expression and some of its inputs, return a new partially evaluated expression
 
-vexpr supports numpy, pytorch, and JAX. `vexpr.numpy`, `vexpr.torch`, and `vexpr.jax` are essentially three different libraries with the same core vexpr design but designed for the respective vector library.
+Vexpr essentially contains three different libraries:
 
-*Example usage:*
+- vexpr.numpy
+- vexpr.torch
+- vexpr.jax
+
+Each of these have same core Vexpr design, but each aim to feel native to each respective vector library ([numpy](https://numpy.org) / [pytorch](https://pytorch.org) / [JAX](https://github.com/google/jax)).
+
+
+## Example usage
+
+Implement a function by defining a Vexpr expression.
 
 ```python
 import vexpr.numpy as vp
@@ -34,90 +43,111 @@ expr = vp.Sum(
 )
 
 print(expr)
-# Output: a data structure showing the original expression
-# Sum(
-#   Multiply(
-#     [Symbol(name='w1'),
-#      Distance(
-#       [SelectFromSymbol(name='x1', indices=[0, 1, 2]),
-#        SelectFromSymbol(name='x2', indices=[0, 1, 2])],
-#     )],
-#   ),
-#   Multiply(
-#     [Symbol(name='w2'),
-#      Distance(
-#       [SelectFromSymbol(name='x1', indices=[0, 3, 4]),
-#        SelectFromSymbol(name='x2', indices=[0, 3, 4])],
-#     )],
-#   ),
-# )
+```
 
-# Evaluation
+Output: a data structure representing the expression.
+```text
+Sum(
+  Multiply(
+    [Symbol(name='w1'),
+     Distance(
+      [SelectFromSymbol(name='x1', indices=[0, 1, 2]),
+       SelectFromSymbol(name='x2', indices=[0, 1, 2])],
+    )],
+  ),
+  Multiply(
+    [Symbol(name='w2'),
+     Distance(
+      [SelectFromSymbol(name='x1', indices=[0, 3, 4]),
+       SelectFromSymbol(name='x2', indices=[0, 3, 4])],
+    )],
+  ),
+)
+```
+
+Evaluate the expression.
+
+```python
 print(expr({
     "w1": 0.75,
     "w2": 0.25,
     "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
     "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
 }))
-# Output:
-# 0.17320508075688773
 
+```
+
+```text
+0.17320508075688773
+```
+
+Transform the expression into a vectorized version.
+
+```python
 expr_vectorized = expr.vectorize()
 
 print(expr_vectorized)
-# Output: An equivalent expression with fewer commands.
-# This expression would have been error-prone to write manually.
-# VectorizedSum(
-#   Multiply(
-#     (Stack(
-#       Symbol(name='w1'),
-#       Symbol(name='w2'),
-#     ),
-#      Distance(
-#       (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
-#        SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
-#       split_indices=[3]
-#     )),
-#   ),
-# )
 
-# Evaluation
 print(expr_vectorized({
     "w1": 0.75,
     "w2": 0.25,
     "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
     "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
 }))
-# Output:
-# 0.17320508075688773
+```
 
-# Partial evaluation
+```text
+VectorizedSum(
+  Multiply(
+    (Stack(
+      Symbol(name='w1'),
+      Symbol(name='w2'),
+    ),
+     Distance(
+      (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
+       SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
+      split_indices=[3]
+    )),
+  ),
+)
+
+0.17320508075688773
+```
+
+This is an equivalent expression with fewer commands. This vectorized expression would have been error-prone to write manually.
+
+Perform partial evaluation, transforming the expression again.
+
+```python
 inference_expr = expr_vectorized.partial_evaluate({
     "w1": 0.70,
     "w2": 0.30,
 })
 
 print(inference_expr)
-# Output: A faster expression that no longer has to build up an np.array on every execution.
-# VectorizedSum(
-#   Multiply(
-#     (array([0.75, 0.25]),
-#      Distance(
-#       (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
-#        SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
-#       split_indices=[3]
-#     )),
-#   ),
-# )
 
-# Evaluation
 print(inference_expr({
     "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
     "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
 }))
-# Output:
-# 0.17320508075688773
 ```
+
+```text
+VectorizedSum(
+  Multiply(
+    (array([0.75, 0.25]),
+     Distance(
+      (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
+       SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
+      split_indices=[3]
+    )),
+  ),
+)
+
+0.17320508075688773
+```
+
+This is a faster expression because it no longer has to build up a np.array on every execution. Partial evaluation proactively runs every part of the expression that depends only on the partial input.
 
 ## Installation
 
@@ -136,7 +166,7 @@ pip install vexpr
 
 ## Use cases
 
-vexpr is useful anywhere where you have:
+Vexpr is useful anywhere where you have:
 
 1. Large tree-like expressions
 2. ...with similar logic in different branches
@@ -146,19 +176,82 @@ One area where this often occurs is in kernel methods like Gaussian Processes an
 
 ## Design
 
-vexpr was originally designed to enable fast [gpytorch](https://gpytorch.ai) compositional kernels. In gpytorch, compositional kernels are built up using expressions like `ProductKernel(AdditiveKernel(Kernel1(), Kernel2(), Kernel3()), Kernel4())`. This tree-structured expression is an intuitive, non-error-prone user interface. The problem with this approach is that running such a kernel runs each subkernel in sequence, rather than running them together as a single vectorized kernel. The purpose of vexpr is to let you write code like this without giving up performance. You write a tree-structured expression, then you let vexpr optimize that it an equivalent, much faster one.
+Vexpr was originally designed to enable fast [gpytorch](https://gpytorch.ai) compositional kernels. In gpytorch, compositional kernels are built up using expressions like:
 
-Writing a vexpr expression is like using a programming language that doesn't support variables. Every vexpr is a tree. The moment you introduce variables (a.k.a. `let` binding), you switch from executing a tree to executing a direct acyclic graph (DAG). vexpr specifically aims at optimizing trees, which are a subset of DAGs. To handle DAGs with vexpr, choose from the following strategies:
+```python
+ProductKernel(
+    AdditiveKernel(
+        Kernel1(), Kernel2(), Kernel3()
+    ),
+    Kernel4(),
+    AdditiveKernel(
+        Kernel5(), Kernel6()
+    ),
+)
+```
 
-1. Use [pytrees](https://jax.readthedocs.io/en/latest/pytrees.html) as functions arguments. For example, `vp.Divide(((Symbol("x1"), Symbol("x2")), Symbol("lengthscale")))` computes `lengthscale` once and then uses it divide both `x1` and `x2`. vexpr thoroughly embraces pytrees as function arguments.
-2. Write a custom vexpr function that runs a DAG internally.
-3. Chain two vexpr expressions together. Run one, then run a second one using its output as an input. The second vexpr expression is free to use the output of the first expression in as many leaves of the tree as it wants.
+This tree-structured expression is an intuitive user interface. The code takes the shape of how we think about the math being performed. The problem with this approach is that running such a kernel runs each subkernel in sequence, rather than running them together as a single vectorized kernel. Writing vectorized code is possible, but then you lose the intuitive interface and instead replace it with something tedious and error-prone. The purpose of Vexpr is to let you write code like this without giving up performance. You write a tree-structured expression, then you let Vexpr convert it to an equivalent, much faster one.
 
-vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch's `torch.compile`. vexpr's job is to compile your program down to an efficient set of numpy/pytorch/JAX operations, and then those frameworks' compilers go further.
+Writing Vexpr expressions is like using a programming language that doesn't support variables. Vexpr specifically aims at optimizing trees, which are a subset of DAGs (direct acyclic graphs). There are a few strategies for bridging the gap to DAGs:
 
-vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. vexpr expression are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
+1. Use an expressive technique built into Vexpr: [pytrees](https://jax.readthedocs.io/en/latest/pytrees.html) as functions arguments. For example, the following expression computes `lengthscale` once and then uses it divide both `x1` and `x2`.
+
+```python
+    vp.Divide((
+        (Symbol("x1"), Symbol("x2")),
+        Symbol("lengthscale")
+    ))
+```
+
+2. Write a custom Vexpr function. It can do whatever it wants inside.
+3. Chain two Vexpr expressions together. Run one, then run a second one using its output as an input. The second Vexpr expression is free to use the output of the first expression in as many leaves of the tree as it wants.
+
+Vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch's `torch.compile`. Vexpr's job is to compile your program down to an efficient set of numpy/pytorch/JAX operations, and then those frameworks' compilers go further.
+
+Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expression are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
 
 
 ## Conventions
 
-Some vexpr functions like `Sum` use calling convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So vectorizing `f(arg1, arg2)` and `f(arg3, arg4)` might give you `vectorized_f(np.array([arg1, arg2, arg3, arg4]), sizes=[2, 2])`, while vectorizing `f((arg1, arg2))` and `f((arg3, arg4))` might give you `f((np.array([arg1, arg3]), np.array([arg2, arg4])))`. On top of this, in either calling convention the args themselves may be pytrees. For example, `Sum({"a": 42, "b": 43}, {"a": 2, "b": 3})` would be vectorized to `VectorizedSum({"a": np.array([42, 2]), "b": np.array([43, 3])})`, again following the rule that vectorization preserves pytree structure.
+Some Vexpr functions like `Sum` use calling convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So
+
+```
+vectorize(f(arg1, arg2), f(arg3, arg4))
+```
+
+might give you
+
+```
+vectorized_f(np.array([arg1, arg2, arg3, arg4]),
+             sizes=[2, 2])
+```
+
+while
+
+```
+vectorize(f((arg1, arg2)), f((arg3, arg4)))
+```
+
+might give you
+
+```
+f((np.array([arg1, arg3]),
+   np.array([arg2, arg4])))
+```
+
+On top of this, in either calling convention the args themselves may be pytrees. For example,
+
+```
+vectorize(Sum({"a": 42, "b": 43}), Sum{{"a": 2, "b": 3}))
+```
+
+would give you
+
+```
+VectorizedSum({
+    "a": np.array([42, 2]),
+    "b": np.array([43, 3])
+})
+ ```
+
+again following the rule that vectorization preserves pytree structure.
