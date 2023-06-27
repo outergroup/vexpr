@@ -163,18 +163,7 @@ But an outdated version is available via `pip install`:
 pip install vexpr
 ```
 
-
-## Use cases
-
-Vexpr is useful anywhere where you have:
-
-1. Large tree-like expressions
-2. ...with similar logic in different branches
-3. ...that are evaluated many times.
-
-One area where this often occurs is in kernel methods like Gaussian Processes and Support Vector Machines.
-
-## Design
+## Motivation
 
 Vexpr was originally designed to enable fast [gpytorch](https://gpytorch.ai) compositional kernels. In gpytorch, compositional kernels are built up using expressions like:
 
@@ -191,6 +180,15 @@ ProductKernel(
 ```
 
 This tree-structured expression is an intuitive user interface. The code takes the shape of how we think about the math being performed. The problem with this approach is that running such a kernel runs each subkernel in sequence, rather than running them together as a single vectorized kernel. Writing vectorized code is possible, but then you lose the intuitive interface and instead replace it with something tedious and error-prone. The purpose of Vexpr is to let you write code like this without giving up performance. You write a tree-structured expression, then you let Vexpr convert it to an equivalent, much faster one.
+
+Vexpr is useful anywhere where you have:
+
+1. Large tree-like expressions
+2. ...with similar logic in different branches
+3. ...that are evaluated many times.
+
+
+## Design
 
 Writing Vexpr expressions is like using a programming language that doesn't support variables. Vexpr specifically aims at optimizing trees, which are a subset of DAGs (direct acyclic graphs). There are a few strategies for bridging the gap to DAGs:
 
@@ -211,7 +209,7 @@ Vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch
 Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expression are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
 
 
-## Conventions
+### Calling conventions
 
 Some Vexpr functions like `Sum` use calling convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So
 
