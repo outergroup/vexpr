@@ -1,6 +1,6 @@
 # Vexpr
 
-Vexpr (pronounced "vexper") is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
+Vexpr ("**V**ectorize **expr**essions", pronounced "Vexper") is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
 
 - **Vectorization:** given a human-written expression, return an equivalent expression that uses parallel, vectorized operations
 - **Partial evaluation:** given an expression and some of its inputs, return a new partially evaluated expression
@@ -45,7 +45,6 @@ expr = vp.Sum(
 print(expr)
 ```
 
-Output: a data structure representing the expression.
 ```text
 Sum(
   Multiply(
@@ -74,14 +73,13 @@ print(expr({
     "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
     "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
 }))
-
 ```
 
 ```text
 0.17320508075688773
 ```
 
-Transform the expression into a vectorized version.
+Vectorize the expression.
 
 ```python
 expr_vectorized = expr.vectorize()
@@ -116,7 +114,7 @@ VectorizedSum(
 
 This is an equivalent expression with fewer commands. This vectorized expression would have been error-prone to write manually.
 
-Perform partial evaluation, transforming the expression again.
+Perform partial evaluation on the expression.
 
 ```python
 inference_expr = expr_vectorized.partial_evaluate({
@@ -179,7 +177,7 @@ ProductKernel(
 )
 ```
 
-This tree-structured expression is an intuitive user interface. The code takes the shape of how we think about the math being performed. The problem with this approach is that running such a kernel runs each subkernel in sequence, rather than running them together as a single vectorized kernel. Writing vectorized code is possible, but then you lose the intuitive interface and instead replace it with something tedious and error-prone. The purpose of Vexpr is to let you write code like this without giving up performance. You write a tree-structured expression, then you let Vexpr convert it to an equivalent, much faster one.
+This tree-structured expression is an intuitive user interface. The code takes the shape of how we think about the math being performed. The problem with this approach is that running such a kernel runs each subkernel in sequence, rather than running them together as a single vectorized kernel. Manually writing your own kernel with vectorized code is possible, but then you give up the intuitive interface and replace it with something tedious and error-prone. The purpose of Vexpr is to let you write code like this without giving up performance. You write a tree-structured expression, then you let Vexpr convert it to an equivalent, much faster one.
 
 Vexpr is useful anywhere where you have:
 
