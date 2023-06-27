@@ -2,8 +2,8 @@
 
 vexpr is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
 
-- **Vectorization**, given a human-written expression, return an equivalent expression that uses parallel, vectorized operations
-- **Partial evaluation**, given an expression and some of its inputs, return a new partially evaluated expression
+- **Vectorization:** given a human-written expression, return an equivalent expression that uses parallel, vectorized operations
+- **Partial evaluation:** given an expression and some of its inputs, return a new partially evaluated expression
 
 vexpr supports numpy, pytorch, and JAX. `vexpr.numpy`, `vexpr.torch`, and `vexpr.jax` are essentially three different libraries with the same core vexpr design but designed for the respective vector library.
 
@@ -161,4 +161,4 @@ vexpr embraces functional programming, which makes it work automatically with `j
 
 ## Conventions
 
-Some vexpr functions like `Sum` use convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So vectorizing `f(arg1, arg2)` and `f(arg3, arg4)` might give you `vectorized_f(np.array([arg1, arg2, arg3, arg4]), sizes=[2, 2])`, while vectorizing `f((arg1, arg2))` and `f((arg3, arg4))` might give you `f((np.array([arg1, arg3]), np.array([arg2, arg4])))`. On top of this, in either calling convention the args themselves may be pytrees. For example, `Sum({"a": 42, "b": 43}, {"a": 2, "b": 3})` would be vectorized to `VectorizedSum({"a": np.array([42, 2]), "b": np.array([43, 3])})`, again following the rule that vectorization preserves pytree structure.
+Some vexpr functions like `Sum` use calling convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So vectorizing `f(arg1, arg2)` and `f(arg3, arg4)` might give you `vectorized_f(np.array([arg1, arg2, arg3, arg4]), sizes=[2, 2])`, while vectorizing `f((arg1, arg2))` and `f((arg3, arg4))` might give you `f((np.array([arg1, arg3]), np.array([arg2, arg4])))`. On top of this, in either calling convention the args themselves may be pytrees. For example, `Sum({"a": 42, "b": 43}, {"a": 2, "b": 3})` would be vectorized to `VectorizedSum({"a": np.array([42, 2]), "b": np.array([43, 3])})`, again following the rule that vectorization preserves pytree structure.
