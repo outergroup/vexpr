@@ -1,151 +1,119 @@
 # Vexpr
 
-Vexpr ("**V**ectorize **expr**essions", pronounced "Vexper") is a library for writing and transforming tree-like expressions, helping you write fast human-readable code. These transformations include:
+Vexpr ("**V**ectorizable **expr**ession", pronounced "Vexper") is a library that represents expressions as `Vexpr` objects, enabling Lisp-macro-like transformations on those objects. The library provides `Vexpr` interfaces for [numpy](https://numpy.org), [pytorch](https://pytorch.org), and [JAX](https://github.com/google/jax).
 
-- **Vectorization:** given a human-written expression, return an equivalent expression that uses parallel, vectorized operations
-- **Partial evaluation:** given an expression and some of its inputs, return a new partially evaluated expression
+Built-in `Vexpr` transformations include:
 
-Vexpr essentially contains three different libraries:
-
-- vexpr.numpy
-- vexpr.torch
-- vexpr.jax
-
-Each of these have same core Vexpr design, but each aim to feel native to each respective vector library ([numpy](https://numpy.org) / [pytorch](https://pytorch.org) / [JAX](https://github.com/google/jax)).
+- **Vectorization:** Given a human-written expression, return an equivalent expression that uses parallel, vectorized operations. The primary use case for Vexpr's vectorization is when writing "wide" compositional expressions, i.e. expressions with multiple parallel branches with similar operations occurring on those branches. In these scenarios, Vexpr makes it possible to write the code in a readable, compositional way without giving up the performance benefits of vectorized code. Compositionality creates opportunities for library development.
+- **Partial evaluation:** Given an expression and some of its inputs, return a new partially evaluated expression. Partial evaluation enables you to write code that is flexible to more use cases. If you have a function `f(a,b)`, some of your users may want to hold `a` constant and try many different `b` values, while other users may want to hold `b` constant. When you express your `f` as a `Vexpr` object, it is automatically optimized to both of these scenarios.
 
 
 ## Example usage
 
-Implement a function by defining a Vexpr expression.
+Consider the function:
 
 ```python
-import vexpr.numpy as vp
+import numpy as np
+from scipy.spatial.distance import cdist
 
-# Equivalent to
-# def f(x1, x2, w1, w2):
-#     return (w1 * distance(x1[[0, 1, 2], x2[[0, 1, 2]]])
-#             + w2 * distance(x1[[0, 3, 4], x2[[0, 3, 4]]]))
-expr = vp.Sum(
-    vp.Multiply([
-        vp.Symbol("w1"),
-        vp.Distance(
-            [vp.SelectFromSymbol("x1", [0, 1, 2]),
-             vp.SelectFromSymbol("x2", [0, 1, 2])]
-        )
-    ]),
-    vp.Multiply([
-        vp.Symbol("w2"),
-        vp.Distance(
-            [vp.SelectFromSymbol("x1", [0, 3, 4]),
-             vp.SelectFromSymbol("x2", [0, 3, 4])]
-        )
-    ]),
+def f(x1, x2, w1, w2):
+    """
+    Evaluate pairwise distance between two lists of points, using a custom
+    weighted distance metric.
+    """
+    return np.sum([w1 * cdist(x1[..., [0, 1, 2], x2[..., [0, 1, 2]]]),
+                   w2 * cdist(x1[..., [0, 3, 4], x2[..., [0, 3, 4]]])],
+                  axis=0)
+```
+
+This function is written clearly but not efficiently. It indexes into `x1` and `x2` twice. It computes distances twice. It multiplies with weights twice. Let's instead use Vexpr to implement this function so that we can vectorize it.
+
+
+```python
+import vexpr as vp
+import vexpr.numpy as vnp
+from vexpr.scipy.spatial.distance import cdist
+
+@vp.vectorize
+def f(x1, x2, w1, w2):
+    return vnp.sum([w1 * cdist(x1[..., [0, 1, 2]], x2[..., [0, 1, 2]]),
+                    w2 * cdist(x1[..., [0, 3, 4]], x2[..., [0, 3, 4]])],
+                   axis=0)
+```
+
+The decorator immediately parses the function by passing "symbols" into each argument and tracing the function.
+
+```python
+print(f.vexpr)
+```
+
+```text
+numpy.sum(
+  [operator.mul(
+  symbol('w1'),
+  scipy.spatial.distance.cdist((operator.getitem(
+    symbol('x1'),
+    (Ellipsis, [0, 1, 2]),
+  ),
+   operator.getitem(
+    symbol('x2'),
+    (Ellipsis, [0, 1, 2]),
+  ))),
+),
+ operator.mul(
+  symbol('w2'),
+  scipy.spatial.distance.cdist((operator.getitem(
+    symbol('x1'),
+    (Ellipsis, [0, 3, 4]),
+  ),
+   operator.getitem(
+    symbol('x2'),
+    (Ellipsis, [0, 3, 4]),
+  ))),
+)]
+  axis=0
+)
+```
+
+This `Vexpr` data structure is ready to be executed without any further compilation, but the real magic occurs when you call `f` for the first time, triggering compilation into a vectorized `Vexpr`.
+
+```python
+example_inputs = dict(
+    x1=np.random.randn(10, 5),
+    x2=np.random.randn(10, 5),
+    w1=np.array(0.7),
+    w2=np.array(0.3),
 )
 
-print(expr)
+f(**example_inputs)  # first call triggers compilation
+print(f.vectorized)
+f(**example_inputs)  # subsequent calls run fast version
 ```
 
 ```text
-Sum(
-  Multiply(
-    [Symbol(name='w1'),
-     Distance(
-      [SelectFromSymbol(name='x1', indices=[0, 1, 2]),
-       SelectFromSymbol(name='x2', indices=[0, 1, 2])],
-    )],
-  ),
-  Multiply(
-    [Symbol(name='w2'),
-     Distance(
-      [SelectFromSymbol(name='x1', indices=[0, 3, 4]),
-       SelectFromSymbol(name='x2', indices=[0, 3, 4])],
-    )],
-  ),
-)
-```
-
-Evaluate the expression.
-
-```python
-print(expr({
-    "w1": 0.75,
-    "w2": 0.25,
-    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
-}))
-```
-
-```text
-0.17320508075688773
-```
-
-Vectorize the expression.
-
-```python
-expr_vectorized = expr.vectorize()
-
-print(expr_vectorized)
-
-print(expr_vectorized({
-    "w1": 0.75,
-    "w2": 0.25,
-    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
-}))
-```
-
-```text
-VectorizedSum(
-  Multiply(
-    (Stack(
-      Symbol(name='w1'),
-      Symbol(name='w2'),
+numpy.sum(
+  operator.mul(
+  numpy.stack([symbol('w1'), symbol('w2')]),
+  custom.scipy.cdist_multi(
+    operator.getitem(
+      symbol('x1'),
+      (Ellipsis, array([0, 1, 2, 0, 3, 4])),
     ),
-     Distance(
-      (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
-       SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
-      split_indices=[3]
-    )),
+    operator.getitem(
+      symbol('x2'),
+      (Ellipsis, array([0, 1, 2, 0, 3, 4])),
+    ),
+    lengths=array([3, 3])
   ),
 )
-
-0.17320508075688773
+  axis=0
+)
 ```
 
 This is an equivalent expression with fewer commands. This vectorized expression would have been error-prone to write manually.
 
-Perform partial evaluation on the expression.
+<!-- TODO insert timeit calls for the original f, f.vexpr, and f.vectorized  -->
 
-```python
-inference_expr = expr_vectorized.partial_evaluate({
-    "w1": 0.70,
-    "w2": 0.30,
-})
-
-print(inference_expr)
-
-print(inference_expr({
-    "x1": np.array([0.1, 0.2, 0.3, 0.4, 0.5]),
-    "x2": np.array([0.2, 0.3, 0.4, 0.5, 0.6]),
-}))
-```
-
-```text
-VectorizedSum(
-  Multiply(
-    (array([0.75, 0.25]),
-     Distance(
-      (SelectFromSymbol(name='x1', indices=[0, 1, 2, 0, 3, 4]),
-       SelectFromSymbol(name='x2', indices=[0, 1, 2, 0, 3, 4])),
-      split_indices=[3]
-    )),
-  ),
-)
-
-0.17320508075688773
-```
-
-This is a faster expression because it no longer has to build up a np.array on every execution. Partial evaluation proactively runs every part of the expression that depends only on the partial input.
 
 ## Installation
 
@@ -188,66 +156,11 @@ Vexpr is useful anywhere where you have:
 
 ## Design
 
-Writing Vexpr expressions is like using a programming language that doesn't support variables. Vexpr specifically aims at optimizing trees, which are a subset of DAGs (direct acyclic graphs). There are a few strategies for bridging the gap to DAGs:
+Writing Vexpr expressions is like using a programming language that doesn't support variables. Vexpr specifically aims at optimizing trees, which are a subset of DAGs (direct acyclic graphs). There are a couple strategies for bridging the gap to DAGs:
 
-1. Use an expressive technique built into Vexpr: [pytrees](https://jax.readthedocs.io/en/latest/pytrees.html) as functions arguments. For example, the following expression computes `lengthscale` once and then uses it divide both `x1` and `x2`.
-
-```python
-    vp.Divide((
-        (Symbol("x1"), Symbol("x2")),
-        Symbol("lengthscale")
-    ))
-```
-
-2. Write a custom Vexpr function. It can do whatever it wants inside.
-3. Chain two Vexpr expressions together. Run one, then run a second one using its output as an input. The second Vexpr expression is free to use the output of the first expression in as many leaves of the tree as it wants.
+1. Write a custom Vexpr function. It can do whatever it wants inside.
+2. Chain two Vexpr expressions together. Run one, then run a second one using its output as an input. The second Vexpr expression is free to use the output of the first expression in as many leaves of the tree as it wants.
 
 Vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch's `torch.compile`. Vexpr's job is to compile your program down to an efficient set of numpy/pytorch/JAX operations, and then those frameworks' compilers go further.
 
 Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expression are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
-
-
-### Calling conventions
-
-Some Vexpr functions like `Sum` use calling convention `f(arg1, arg2)` while others like `Multiply` use the convention of taking a [pytree](https://jax.readthedocs.io/en/latest/pytrees.html) of args, for example `f((arg1, arg2))`. This convention indicates what happens to those arguments during vectorization. During vectorization, multiple arguments are vectorized into a single argument, whereas pytrees are always preserved. So
-
-```
-vectorize(f(arg1, arg2), f(arg3, arg4))
-```
-
-might give you
-
-```
-vectorized_f(np.array([arg1, arg2, arg3, arg4]),
-             sizes=[2, 2])
-```
-
-while
-
-```
-vectorize(f((arg1, arg2)), f((arg3, arg4)))
-```
-
-might give you
-
-```
-f((np.array([arg1, arg3]),
-   np.array([arg2, arg4])))
-```
-
-On top of this, in either calling convention the args themselves may be pytrees. For example,
-
-```
-vectorize(Sum({"a": 42, "b": 43}), Sum{{"a": 2, "b": 3}))
-```
-
-would give you
-
-```
-VectorizedSum({
-    "a": np.array([42, 2]),
-    "b": np.array([43, 3])
-})
- ```
-
-again following the rule that vectorization preserves pytree structure.
