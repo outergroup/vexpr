@@ -93,7 +93,10 @@ f(**example_inputs)  # subsequent calls run fast version
 ```text
 numpy.sum(
   operator.mul(
-  numpy.stack([symbol('w1'), symbol('w2')]),
+  numpy.reshape(
+    numpy.stack([symbol('w1'), symbol('w2')]),
+    (2, 1, 1),
+  ),
   custom.scipy.cdist_multi(
     operator.getitem(
       symbol('x1'),

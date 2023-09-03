@@ -18,6 +18,8 @@ core.eval_impls.update({
     p.ones_p: np.ones,
     p.stack_p: np.stack,
     p.concatenate_p: np.concatenate,
+    p.moveaxis_p: np.moveaxis,
+    p.reshape_p: np.reshape,
     p.exp_p: np.exp,
     p.log_p: np.log,
     p.sum_p: np.sum,

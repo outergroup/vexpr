@@ -304,7 +304,20 @@ def push_stack_through_mul(shapes, expr, allow_partial=True):
     if "axis" in expr.kwargs:
         kwargs["axis"] = expr.kwargs["axis"]
 
+    # Decide how to reshape left. (TODO this code is still hacky.)
+    right_shapes = [shapes[id(child_expr)] for child_expr in right]
+    right_shape = right_shapes[0]
+    assert all(right_shape == shape for shape in right_shapes)
+    axis = expr.kwargs.get("axis", 0)
+    if axis < 0:
+        axis += len(right_shape) + 1
+    num_left = len(left)
+    ndims_broadcast = len(right_shape[axis:])
+
     left = core._vectorize(shapes, vnp.stack(left, **kwargs))
+    if ndims_broadcast > 0:
+        left = vnp.reshape(left, (num_left,) + (1,) * ndims_broadcast)
+
     right = core._vectorize(shapes, vnp.stack(right, **kwargs))
 
     return left * right

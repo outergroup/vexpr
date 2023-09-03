@@ -7,6 +7,7 @@ ones_p, ones = _p_and_constructor("numpy.ones")
 stack_p, stack = _p_and_constructor("numpy.stack")
 concatenate_p, concatenate = _p_and_constructor("numpy.concatenate")
 moveaxis_p, moveaxis = _p_and_constructor("numpy.moveaxis")
+reshape_p, reshape = _p_and_constructor("numpy.reshape")
 # Unary operators
 exp_p, exp = _p_and_constructor("numpy.exp")
 log_p, log = _p_and_constructor("numpy.log")
@@ -24,6 +25,7 @@ __all__ = [
     "stack",
     "concatenate",
     "moveaxis",
+    "reshape",
     "exp",
     "log",
     "sum",
