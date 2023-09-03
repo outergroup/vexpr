@@ -304,21 +304,48 @@ def push_stack_through_mul(shapes, expr, allow_partial=True):
     if "axis" in expr.kwargs:
         kwargs["axis"] = expr.kwargs["axis"]
 
-    # Decide how to reshape left. (TODO this code is still hacky.)
+    # decide whether ones need to be inserted into the shape to get proper
+    # broadcasting
+    left_shapes = [shapes[id(child_expr)] for child_expr in left]
+    left_shape_before_stack = left_shapes[0]
+    assert all(left_shape_before_stack == shape for shape in left_shapes)
     right_shapes = [shapes[id(child_expr)] for child_expr in right]
-    right_shape = right_shapes[0]
-    assert all(right_shape == shape for shape in right_shapes)
+    right_shape_before_stack = right_shapes[0]
+    assert all(right_shape_before_stack == shape for shape in right_shapes)
+    discrepancy = len(right_shape_before_stack) - len(left_shape_before_stack)
+    if discrepancy == 0:
+        implicit_left_shape = left_shape_before_stack
+        implicit_right_shape = right_shape_before_stack
+    elif discrepancy > 0:
+        implicit_left_shape = left_shape_before_stack + (1,) * discrepancy
+        implicit_right_shape = right_shape_before_stack
+    else:
+        implicit_left_shape = left_shape_before_stack
+        implicit_right_shape = right_shape_before_stack + (1,) * -discrepancy
+
     axis = expr.kwargs.get("axis", 0)
-    if axis < 0:
-        axis += len(right_shape) + 1
-    num_left = len(left)
-    ndims_broadcast = len(right_shape[axis:])
+    actual_left_shape = np_stack_shape(left_shape_before_stack,
+                                       len(left), axis)
+    actual_right_shape = np_stack_shape(right_shape_before_stack,
+                                        len(right), axis)
+    implicit_left_shape = np_stack_shape(implicit_left_shape,
+                                         len(left), axis)
+    implicit_right_shape = np_stack_shape(implicit_right_shape,
+                                          len(right), axis)
+
+    implicit_neg_axis = (axis
+                         if axis < 0
+                         else -len(implicit_left_shape) + axis)
 
     left = core._vectorize(shapes, vnp.stack(left, **kwargs))
-    if ndims_broadcast > 0:
-        left = vnp.reshape(left, (num_left,) + (1,) * ndims_broadcast)
+    if implicit_left_shape[implicit_neg_axis:] \
+       != actual_left_shape[implicit_neg_axis:]:
+        left = vnp.reshape(left, implicit_left_shape[implicit_neg_axis:])
 
     right = core._vectorize(shapes, vnp.stack(right, **kwargs))
+    if implicit_right_shape[implicit_neg_axis:] \
+       != actual_right_shape[implicit_neg_axis:]:
+        right = vnp.reshape(right, implicit_right_shape[implicit_neg_axis:])
 
     return left * right
 

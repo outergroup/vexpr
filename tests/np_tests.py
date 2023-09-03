@@ -143,6 +143,32 @@ class TestVexprNumpyTests(unittest.TestCase):
 
         self._vectorize_test(example_inputs, f, expected)
 
+        # now flip the multiplication around and test again
+
+        @vp.vectorize
+        def f_flipped(x1, x2, w1, w2):
+            return vnp.sum(
+                [vscipy.spatial.distance.cdist(x1[..., [0, 1, 2]],
+                                               x2[..., [0, 1, 2]])
+                 * w1,
+                 vscipy.spatial.distance.cdist(x1[..., [0, 3, 4]],
+                                               x2[..., [0, 3, 4]])
+                 * w2],
+                axis=0)
+
+        @vp.make_vexpr
+        def expected_flipped(x1, x2, w1, w2):
+            indices = np.array([0, 1, 2, 0, 3, 4])
+            return vnp.sum(
+                vcsp.cdist_multi(
+                    x1[..., indices],
+                    x2[..., indices],
+                    lengths=np.array([3, 3]))
+                * vnp.reshape(vnp.stack([w1, w2]), (2, 1, 1)),
+                axis=0)
+
+        self._vectorize_test(example_inputs, f_flipped, expected_flipped)
+
     def test_kernel(self):
         example_inputs = dict(
             x1=np.array([[1.0, 1.0, 1.0, 1.0, 1.0],
