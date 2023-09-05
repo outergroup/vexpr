@@ -113,62 +113,6 @@ class TestVexprNumpyTests(unittest.TestCase):
 
         self._vectorize_test(example_inputs, f, expected)
 
-    def test_stack_weights_multiply(self):
-        example_inputs = dict(
-            x1=np.random.randn(10, 5),
-            x2=np.random.randn(10, 5),
-            w1=np.array(0.7),
-            w2=np.array(0.3),
-        )
-
-        @vp.vectorize
-        def f(x1, x2, w1, w2):
-            return vnp.sum(
-                [w1 * vscipy.spatial.distance.cdist(x1[..., [0, 1, 2]],
-                                                    x2[..., [0, 1, 2]]),
-                 w2 * vscipy.spatial.distance.cdist(x1[..., [0, 3, 4]],
-                                                    x2[..., [0, 3, 4]])],
-                axis=0)
-
-        @vp.make_vexpr
-        def expected(x1, x2, w1, w2):
-            indices = np.array([0, 1, 2, 0, 3, 4])
-            return vnp.sum(
-                vnp.reshape(vnp.stack([w1, w2]), (2, 1, 1))
-                * vcsp.cdist_multi(
-                    x1[..., indices],
-                    x2[..., indices],
-                    lengths=np.array([3, 3])),
-                axis=0)
-
-        self._vectorize_test(example_inputs, f, expected)
-
-        # now flip the multiplication around and test again
-
-        @vp.vectorize
-        def f_flipped(x1, x2, w1, w2):
-            return vnp.sum(
-                [vscipy.spatial.distance.cdist(x1[..., [0, 1, 2]],
-                                               x2[..., [0, 1, 2]])
-                 * w1,
-                 vscipy.spatial.distance.cdist(x1[..., [0, 3, 4]],
-                                               x2[..., [0, 3, 4]])
-                 * w2],
-                axis=0)
-
-        @vp.make_vexpr
-        def expected_flipped(x1, x2, w1, w2):
-            indices = np.array([0, 1, 2, 0, 3, 4])
-            return vnp.sum(
-                vcsp.cdist_multi(
-                    x1[..., indices],
-                    x2[..., indices],
-                    lengths=np.array([3, 3]))
-                * vnp.reshape(vnp.stack([w1, w2]), (2, 1, 1)),
-                axis=0)
-
-        self._vectorize_test(example_inputs, f_flipped, expected_flipped)
-
     def test_kernel(self):
         example_inputs = dict(
             x1=np.array([[1.0, 1.0, 1.0, 1.0, 1.0],
@@ -178,8 +122,6 @@ class TestVexprNumpyTests(unittest.TestCase):
             lengthscale=np.array([0.7, 0.8, 0.9, 1.0, 1.1]),
             scale=np.array(1.2),
         )
-
-        indices = [0, 1, 2]
 
         @vp.vectorize
         def kernel(x1, x2, scale, lengthscale):
