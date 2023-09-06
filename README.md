@@ -32,12 +32,12 @@ This function is written clearly but not efficiently. It indexes into `x1` and `
 ```python
 import vexpr as vp
 import vexpr.numpy as vnp
-from vexpr.scipy.spatial.distance import cdist
+from vexpr.scipy.spatial.distance import cdist as v_cdist
 
 @vp.vectorize
 def f(x1, x2, w1, w2):
-    return vnp.sum([w1 * cdist(x1[..., [0, 1, 2]], x2[..., [0, 1, 2]]),
-                    w2 * cdist(x1[..., [0, 3, 4]], x2[..., [0, 3, 4]])],
+    return vnp.sum([w1 * v_cdist(x1[..., [0, 1, 2]], x2[..., [0, 1, 2]]),
+                    w2 * v_cdist(x1[..., [0, 3, 4]], x2[..., [0, 3, 4]])],
                    axis=0)
 ```
 
@@ -86,7 +86,7 @@ example_inputs = dict(
 )
 
 f(**example_inputs)  # first call triggers compilation
-print(f.vectorized)
+print(f.vexpr)
 f(**example_inputs)  # subsequent calls run fast version
 ```
 
@@ -115,7 +115,37 @@ numpy.sum(
 
 This is an equivalent expression with fewer commands. This vectorized expression would have been error-prone to write manually.
 
-<!-- TODO insert timeit calls for the original f, f.vexpr, and f.vectorized  -->
+Now we perform partial evaluation on the expression.
+
+```python
+inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
+print(inference_f)
+```
+
+```text
+numpy.sum(
+  operator.mul(
+  array([[[0.75]],
+         [[0.25]]]),
+  custom.scipy.cdist_multi(
+    operator.getitem(
+      symbol('x1'),
+      (Ellipsis, array([0, 1, 2, 0, 3, 4])),
+    ),
+    operator.getitem(
+      symbol('x2'),
+      (Ellipsis, array([0, 1, 2, 0, 3, 4])),
+    ),
+    lengths=array([3, 3])
+  ),
+)
+  axis=0
+)
+```
+
+This is a faster expression because it no longer has to build up a np.array on every execution. Partial evaluation proactively runs every part of the expression that depends only on the partial input. In this expression, you can see this from the fact that the `numpy.reshape` has already occurred on the array.
+
+<!-- TODO insert timeit calls for the original f, f.vexpr, and the original f.vexpr  -->
 
 
 ## Installation

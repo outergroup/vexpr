@@ -261,40 +261,108 @@ class TestVexprNumpyTests(unittest.TestCase):
                               np.array([0, 0, 1, 1]),
                               vnp.stack([x1, x2, x1, x2]))
 
+
+        import vexpr.core as core
+        import vexpr.numpy.primitives as np_p
+        orig = core.vectorize_impls[np_p.stack_p]
+        trace = [False]
+        def traced_vectorize(shapes, expr):
+            trace[0] = True
+            return orig(shapes, expr)
+        core.vectorize_impls[np_p.stack_p] = traced_vectorize
+
+        # first call should vectorize
         f(**example_inputs)
+        self.assertTrue(trace[0])
+        self._assert_vexprs_equal(f.vexpr, expected)
 
-        class MockWasCalled(Exception): pass
-        class Mock:
-            def __call__(self, **kwargs):
-                raise MockWasCalled()
-        f.vectorized = Mock()
+        # subsequent calls should not
+        assert np_p.add_at_p not in core.vectorize_impls  # update test if this changes
+        trace = [False]
+        def traced_add_at_vectorize(shapes, expr):
+            trace[0] = True
+            return expr
 
-        with self.assertRaises(MockWasCalled):
-            f(**example_inputs)
+        core.vectorize_impls[np_p.add_at_p] = traced_add_at_vectorize
+        f(**example_inputs)
+        self.assertFalse(trace[0])
 
+    def test_readme(self):
+        from vexpr.scipy.spatial.distance import cdist as v_cdist
+
+        @vp.vectorize
+        def f(x1, x2, w1, w2):
+            return vnp.sum([w1 * v_cdist(x1[..., [0, 1, 2]], x2[..., [0, 1, 2]]),
+                            w2 * v_cdist(x1[..., [0, 3, 4]], x2[..., [0, 3, 4]])],
+                           axis=0)
+
+        # print(f.vexpr)
+        @vp.make_vexpr
+        def expected_vectorized(x1, x2, w1, w2):
+            indices = np.array([0, 1, 2, 0, 3, 4])
+            return vnp.sum(
+                vnp.reshape(vnp.stack([w1, w2]), (2, 1, 1))
+                * vcsp.cdist_multi(
+                    x1[..., indices],
+                    x2[..., indices],
+                    lengths=np.array([3, 3])),
+                axis=0)
+
+        import vexpr.core
+
+        @vp.make_vexpr
+        def expected_pe(x1, x2, w1, w2):
+            indices = np.array([0, 1, 2, 0, 3, 4])
+            return vnp.sum(
+                vexpr.core.operator_mul(
+                    np.array([[[0.75]], [[0.25]]]),
+                    vcsp.cdist_multi(
+                    x1[..., indices],
+                    x2[..., indices],
+                    lengths=np.array([3, 3]))
+                ),
+                axis=0)
+
+        example_inputs = dict(
+            x1=np.random.randn(10, 5),
+            x2=np.random.randn(10, 5),
+            w1=np.array(0.7),
+            w2=np.array(0.3),
+        )
+
+        f(**example_inputs)  # first call triggers compilation
+        # print(f.vexpr)
+        self._assert_vexprs_equal(f.vexpr, expected_vectorized)
+
+        inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
+        print(inference_f)
+        self._assert_vexprs_equal(inference_f, expected_pe)
 
     def _vectorize_test(self, example_inputs, f, expected_after):
         before_result = f(**example_inputs)
-        after = f.vectorized
+        after = f.vexpr
 
-        # Equality checks are a pain when there might be numpy arrays in the
-        # objects. Test the types and values separately.
-        after_types, expected_after_types = tree_map(
-            lambda x: (x.dtype
-                       if isinstance(x, np.ndarray)
-                       else x),
-            (after, expected_after))
-        after_no_np, expected_after_no_np = tree_map(
-            lambda x: (x.tolist()
-                       if isinstance(x, np.ndarray)
-                       else x),
-            (after, expected_after))
-
-        self.assertEqual(after_types, expected_after_types)
-        self.assertEqual(after_no_np, expected_after_no_np)
+        self._assert_vexprs_equal(after, expected_after)
 
         after_result = f(**example_inputs)
         np.testing.assert_equal(before_result, after_result)
+
+    def _assert_vexprs_equal(self, vexpr1, vexpr2):
+        # Equality checks are a pain when there might be numpy arrays in the
+        # objects. Test the types and values separately.
+        vexpr1_types, vexpr2_types = tree_map(
+            lambda x: (x.dtype
+                       if isinstance(x, np.ndarray)
+                       else x),
+            (vexpr1, vexpr2))
+        vexpr1_no_np, vexpr2_no_np = tree_map(
+            lambda x: (x.tolist()
+                       if isinstance(x, np.ndarray)
+                       else x),
+            (vexpr1, vexpr2))
+
+        self.assertEqual(vexpr1_types, vexpr2_types)
+        self.assertEqual(vexpr1_no_np, vexpr2_no_np)
 
 
 if __name__ == '__main__':

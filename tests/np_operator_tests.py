@@ -13,6 +13,13 @@ from jax.tree_util import tree_map
 
 
 class TestNumpyOperatorTests(unittest.TestCase):
+    def test_multiply_with_np_array(self):
+        import vexpr.core as c
+        w = vp.symbol("w")
+        x = c.constant(np.array([[1.0, 2.0]]))
+        self._assert_vexprs_equal(w * x, c.operator_mul(w, x))
+        self._assert_vexprs_equal(x * w, c.operator_mul(x, w))
+
     def test_stack_weights_multiply(self):
         example_inputs = dict(
             x1=np.random.randn(10, 5),
@@ -269,26 +276,31 @@ class TestNumpyOperatorTests(unittest.TestCase):
 
     def _vectorize_test(self, example_inputs, f, expected_after):
         before_result = f(**example_inputs)
-        after = f.vectorized
+        after = f.vexpr
 
-        # Equality checks are a pain when there might be numpy arrays in the
-        # objects. Test the types and values separately.
-        after_types, expected_after_types = tree_map(
-            lambda x: (x.dtype
-                       if isinstance(x, np.ndarray)
-                       else x),
-            (after, expected_after))
-        after_no_np, expected_after_no_np = tree_map(
-            lambda x: (x.tolist()
-                       if isinstance(x, np.ndarray)
-                       else x),
-            (after, expected_after))
-
-        self.assertEqual(after_types, expected_after_types)
-        self.assertEqual(after_no_np, expected_after_no_np)
+        self._assert_vexprs_equal(after, expected_after)
 
         after_result = f(**example_inputs)
         np.testing.assert_equal(before_result, after_result)
+        
+
+    def _assert_vexprs_equal(self, vexpr1, vexpr2):
+        # Equality checks are a pain when there might be numpy arrays in the
+        # objects. Test the types and values separately.
+        vexpr1_types, vexpr2_types = tree_map(
+            lambda x: (x.dtype
+                       if isinstance(x, np.ndarray)
+                       else x),
+            (vexpr1, vexpr2))
+        vexpr1_no_np, vexpr2_no_np = tree_map(
+            lambda x: (x.tolist()
+                       if isinstance(x, np.ndarray)
+                       else x),
+            (vexpr1, vexpr2))
+
+        self.assertEqual(vexpr1_types, vexpr2_types)
+        self.assertEqual(vexpr1_no_np, vexpr2_no_np)
+
 
 
 if __name__ == '__main__':

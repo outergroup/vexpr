@@ -28,6 +28,9 @@ class Vexpr(NamedTuple):
     def __mul__(self, other):
         return operator_mul(self, other)
 
+    def __rmul__(self, other):
+        return operator_mul(other, self)
+
     def __truediv__(self, other):
         return operator_truediv(self, other)
 
@@ -108,8 +111,9 @@ def call(expr, context, callback=None):
     This function implements the Vexpr interpreter.
     """
     if not isinstance(expr, Vexpr):
-        result = expr
-    elif expr.op is symbol_p:
+        raise ValueError(expr)
+
+    if expr.op is symbol_p:
         result = context[expr.args[0]]
     elif expr.op is let_p:
         context2 = dict(context)
@@ -152,15 +156,6 @@ shape_impls = {
 }
 
 
-def evaluate_shapes(expr, **example_inputs):
-    shapes = {}
-    def record_shape(sub_expr, result):
-        shape_impl = shape_impls[type(result)]
-        shapes[id(sub_expr)] = shape_impl(result)
-    call(expr, example_inputs, record_shape)
-    return shapes
-
-
 ################################################################################
 # Built-in primitives
 ################################################################################
@@ -179,6 +174,8 @@ operator_pow_p, operator_pow = _p_and_constructor("operator.pow")
 operator_neg_p, operator_neg = _p_and_constructor("operator.neg")
 operator_getitem_p, operator_getitem = _p_and_constructor("operator.getitem")
 
+constant_p = Primitive("constant")
+constant = lambda value: Vexpr(constant_p, (value,), {})
 
 ################################################################################
 # Default Impls
@@ -194,6 +191,63 @@ eval_impls.update({
     operator_neg_p: operator.neg,
     operator_getitem_p: operator.getitem,
 })
+
+
+################################################################################
+# Vexprs partial evaluation
+################################################################################
+
+# this is essentially an alternate interpreter which only evaluates an operator
+# if its children can be evaluated, given the provided inputs.
+def partial_evaluate_(expr, context):
+    if not isinstance(expr, Vexpr):
+        raise ValueError(expr)
+
+    if expr.op is symbol_p:
+        name = expr.args[0]
+        if name in context:
+            return context[expr.args[0]]
+        else:
+            return expr
+    elif expr.op is let_p:
+        context2 = dict(context)
+        for symbol, v in expr.args[0]:
+            name = (symbol if isinstance(symbol, str) else symbol.args[0])
+            v = partial_evaluate_(v, context2)
+            if not isinstance(v, Vexpr):
+                context2[name] = v
+        return partial_evaluate_(expr.args[1], context2)
+    else:
+        impl = eval_impls[expr.op]
+
+        # Evaluate Vexprs in the arguments, down to one level deep. Thus we
+        # allow lists of Vexprs as args. We could replace this with JAX's
+        # tree_map if we want to support arbitrary pytrees, but for now we're
+        # avoiding the JAX dependency. (Also that's awkward with Vexprs, which
+        # are technically tuples, hence aren't pytree leafs by default.)
+        f = partial(partial_evaluate_, context=context)
+        args = tuple((f(arg)
+                     if isinstance(arg, Vexpr)
+                     else (type(arg)((f(v)
+                                      if isinstance(v, Vexpr)
+                                      else v) for v in arg)
+                           if isinstance(arg, (list, tuple))
+                           else arg))
+                     for arg in expr.args)
+
+        ready = True
+        for arg in args:
+            if isinstance(arg, Vexpr):
+                ready = False
+            elif isinstance(arg, (list, tuple)):
+                for subarg in arg:
+                    if isinstance(subarg, Vexpr):
+                        ready = False
+
+        if ready:
+            return impl(*args, **expr.kwargs)
+        else:
+            return Vexpr(expr.op, args, expr.kwargs)
 
 
 ################################################################################
@@ -266,21 +320,47 @@ def make_vexpr(f):
 def vectorize(f):
     if not isinstance(f, Vexpr):
         f = make_vexpr(f)
-    return LazyVectorize(f)
+    return VexprWithQueuedVectorize(f)
 
-class LazyVectorize:
+def partial_evaluate(f, inputs):
+    """
+    If all symbols are specified, the Vexpr is fully evaluated.
+    """
+    queue_vectorize = (isinstance(f, VexprWithQueuedVectorize)
+                       and not f.is_vectorized)
+    vexpr = (f.vexpr
+             if isinstance(f, VexprWithQueuedVectorize)
+             else f)
+
+    result = partial_evaluate_(vexpr, inputs)
+
+    if queue_vectorize:
+        result = VexprWithQueuedVectorize(result)
+
+    return result
+
+def evaluate_shapes(expr, **example_inputs):
+    shapes = {}
+    def record_shape(sub_expr, result):
+        shape_impl = shape_impls[type(result)]
+        shapes[id(sub_expr)] = shape_impl(result)
+    call(expr, example_inputs, record_shape)
+    return shapes
+
+class VexprWithQueuedVectorize:
     def __init__(self, vexpr):
         self.vexpr = vexpr
-        self.vectorized = None
+        self.is_vectorized = False
 
     def __call__(self, **kwargs):
-        if self.vectorized is None:
+        if self.is_vectorized:
+            return self.vexpr(**kwargs)
+        else:
             shapes = {}
             def record_shape(sub_expr, result):
                 shape_impl = shape_impls[type(result)]
                 shapes[id(sub_expr)] = shape_impl(result)
             result = call(self.vexpr, kwargs, record_shape)
-            self.vectorized = _vectorize(shapes, self.vexpr)
+            self.vexpr = _vectorize(shapes, self.vexpr)
+            self.is_vectorized = True
             return result
-        else:
-            return self.vectorized(**kwargs)

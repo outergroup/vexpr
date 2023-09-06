@@ -52,7 +52,7 @@ class TestVexprCore(unittest.TestCase):
 
     def _vectorize_test(self, example_inputs, f, expected_after):
         before_result = f(**example_inputs)
-        after = f.vectorized
+        after = f.vexpr
 
         # Equality checks are a pain when there might be numpy arrays in the
         # objects. Test the types and values separately.
