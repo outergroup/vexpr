@@ -311,56 +311,79 @@ class CannotVectorize(Exception):
 # User interface
 ################################################################################
 
+class VexprCaller:
+    """
+    This class enables calling a Vexpr with ordered args. It also provides a way
+    of queueing alternate __call__ behavior.
+    """
+    def __init__(self, vexpr, arg_names):
+        self.vexpr = vexpr
+        self.arg_names = arg_names
+        self.alternate_calls = []
+
+    def clone(self):
+        ret = VexprCaller(self.vexpr, self.arg_names)
+        ret.alternate_calls = self.alternate_calls
+        return ret
+
+    def __call__(self, *args, **kwargs):
+        if len(args) > 0:
+            kwargs.update(dict(zip(self.arg_names, args)))
+
+        if len(self.alternate_calls) > 0:
+            call_fn = self.alternate_calls[0]
+            return call_fn(self, 0, **kwargs)
+
+        return self.vexpr(**kwargs)
+
+
+def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
+    shapes = {}
+    def record_shape(sub_expr, result):
+        shape_impl = shape_impls[type(result)]
+        shapes[id(sub_expr)] = shape_impl(result)
+    result = call(vexpr_caller.vexpr, kwargs, record_shape)
+    vexpr_caller.vexpr = _vectorize(shapes, vexpr_caller.vexpr)
+    del vexpr_caller.alternate_calls[i_alternate]
+    return result
+
+
 def make_vexpr(f):
     arg_names = inspect.getfullargspec(f).args  # TODO allow kwargs?
     symbols = {name: symbol(name) for name in arg_names}
+    # trace the function by calling it with symbols
     expression = f(*symbols.values())
-    return expression
+    return VexprCaller(expression, arg_names)
+
 
 def vectorize(f):
-    if not isinstance(f, Vexpr):
+    if isinstance(f, VexprCaller):
+        f = f.clone()
+    elif isinstance(f, Vexpr):
+        f = VexprCaller(f, [])
+    else:
         f = make_vexpr(f)
-    return VexprWithQueuedVectorize(f)
+
+    f.alternate_calls.append(call_and_vectorize)
+    return f
 
 def partial_evaluate(f, inputs):
     """
     If all symbols are specified, the Vexpr is fully evaluated.
     """
-    queue_vectorize = (isinstance(f, VexprWithQueuedVectorize)
-                       and not f.is_vectorized)
-    vexpr = (f.vexpr
-             if isinstance(f, VexprWithQueuedVectorize)
-             else f)
-
-    result = partial_evaluate_(vexpr, inputs)
-
-    if queue_vectorize:
-        result = VexprWithQueuedVectorize(result)
-
-    return result
-
-def evaluate_shapes(expr, **example_inputs):
-    shapes = {}
-    def record_shape(sub_expr, result):
-        shape_impl = shape_impls[type(result)]
-        shapes[id(sub_expr)] = shape_impl(result)
-    call(expr, example_inputs, record_shape)
-    return shapes
-
-class VexprWithQueuedVectorize:
-    def __init__(self, vexpr):
-        self.vexpr = vexpr
-        self.is_vectorized = False
-
-    def __call__(self, **kwargs):
-        if self.is_vectorized:
-            return self.vexpr(**kwargs)
-        else:
-            shapes = {}
-            def record_shape(sub_expr, result):
-                shape_impl = shape_impls[type(result)]
-                shapes[id(sub_expr)] = shape_impl(result)
-            result = call(self.vexpr, kwargs, record_shape)
-            self.vexpr = _vectorize(shapes, self.vexpr)
-            self.is_vectorized = True
-            return result
+    if isinstance(f, VexprCaller):
+        f = f.clone()
+        f.vexpr = partial_evaluate_(f.vexpr, inputs)
+        for name in inputs.keys():
+            # Mimic behavior of functools.partial. Any arg after the first kwarg
+            # can now only be specified as a kwarg.
+            try:
+                i = f.arg_names.index(name)
+                del f.arg_names[i:]
+            except ValueError:
+                pass
+        return f
+    elif isinstance(f, Vexpr):
+        return partial_evaluate_(f, inputs)
+    else:
+        raise ValueError(f)

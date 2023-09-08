@@ -278,11 +278,10 @@ class TestNumpyOperatorTests(unittest.TestCase):
         before_result = f(**example_inputs)
         after = f.vexpr
 
-        self._assert_vexprs_equal(after, expected_after)
+        self._assert_vexprs_equal(after, expected_after.vexpr)
 
         after_result = f(**example_inputs)
         np.testing.assert_equal(before_result, after_result)
-        
 
     def _assert_vexprs_equal(self, vexpr1, vexpr2):
         # Equality checks are a pain when there might be numpy arrays in the

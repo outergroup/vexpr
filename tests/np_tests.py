@@ -274,7 +274,7 @@ class TestVexprNumpyTests(unittest.TestCase):
         # first call should vectorize
         f(**example_inputs)
         self.assertTrue(trace[0])
-        self._assert_vexprs_equal(f.vexpr, expected)
+        self._assert_vexprs_equal(f.vexpr, expected.vexpr)
 
         # subsequent calls should not
         assert np_p.add_at_p not in core.vectorize_impls  # update test if this changes
@@ -332,17 +332,17 @@ class TestVexprNumpyTests(unittest.TestCase):
 
         f(**example_inputs)  # first call triggers compilation
         # print(f.vexpr)
-        self._assert_vexprs_equal(f.vexpr, expected_vectorized)
+        self._assert_vexprs_equal(f.vexpr, expected_vectorized.vexpr)
 
         inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
         print(inference_f)
-        self._assert_vexprs_equal(inference_f, expected_pe)
+        self._assert_vexprs_equal(inference_f.vexpr, expected_pe.vexpr)
 
     def _vectorize_test(self, example_inputs, f, expected_after):
         before_result = f(**example_inputs)
         after = f.vexpr
 
-        self._assert_vexprs_equal(after, expected_after)
+        self._assert_vexprs_equal(after, expected_after.vexpr)
 
         after_result = f(**example_inputs)
         np.testing.assert_equal(before_result, after_result)
