@@ -86,8 +86,8 @@ example_inputs = dict(
 )
 
 f(**example_inputs)  # first call triggers compilation
-print(f.vexpr)
 f(**example_inputs)  # subsequent calls run fast version
+print(f.vexpr)
 ```
 
 ```text
