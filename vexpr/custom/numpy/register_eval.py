@@ -1,7 +1,5 @@
-import numpy as np
-
 from vexpr import core
-from .primitives import shuffle_p, matern_p
+from .primitives import shuffle_p
 
 def shuffle_impl(arr, indices, axis=0):
     selection = [slice(None)] * arr.ndim

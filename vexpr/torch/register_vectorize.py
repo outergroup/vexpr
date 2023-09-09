@@ -1,9 +1,9 @@
 from functools import partial
 
 import vexpr as vp
-import vexpr.numpy as vnp
+import vexpr.torch as vtorch
 import vexpr.core as core
-import vexpr.numpy.primitives as p
+import vexpr.torch.primitives as p
 
 
 def stack_vectorize(shapes, expr):
@@ -25,7 +25,7 @@ def stack_vectorize(shapes, expr):
 
 
 # TODO: obviously, understand which of these impls should be the same.
-def concatenate_vectorize(shapes, expr):
+def concat_vectorize(shapes, expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op
                                    for v in expr.args[0]
@@ -33,7 +33,7 @@ def concatenate_vectorize(shapes, expr):
 
     vexpr_ops = [op for op in vexpr_ops if op is not core.symbol_p]
 
-    # TODO: in general, every user-provided stack (and maybe concatenate, and
+    # TODO: in general, every user-provided stack (and maybe concat, and
     # other things?) should be pushed through before trying other stuff. they
     # just cause confusion. One solution is to do a first pass that is bottom
     # up, performing a vectorize on each stack, starting from the leaf nodes.
@@ -42,7 +42,7 @@ def concatenate_vectorize(shapes, expr):
     # logic.
 
 
-    # TODO if any child ops are a concatenate with the same axis, absorb their
+    # TODO if any child ops are a concat with the same dim, absorb their
     # children
 
     # TODO: for any adjacent numpy arrays, perform a concat immediately?
@@ -66,8 +66,8 @@ def concatenate_vectorize(shapes, expr):
                         pass
                 child_exprs.append(child_expr)
             if changed:
-                expr = vnp.concatenate(child_exprs, **expr.kwargs)
-                return concatenate_vectorize(shapes, expr)
+                expr = vtorch.concat(child_exprs, **expr.kwargs)
+                return concat_vectorize(shapes, expr)
 
         for allow_partial in (False, True):
             for op in vexpr_ops:
@@ -77,24 +77,23 @@ def concatenate_vectorize(shapes, expr):
                 except core.CannotVectorize:
                     pass
 
-
     return expr
 
 def reduction_vectorize(op, shapes, expr):
     assert expr.op is op
-    # TODO handle axis?
+    # TODO handle dim?
     child_expr = expr.args[0]
     if not isinstance(child_expr, core.Vexpr):
-        child_expr = vnp.stack(expr.args[0])
+        child_expr = vtorch.stack(expr.args[0])
     child_expr = core._vectorize(shapes, child_expr)
     kwargs = {}
-    if "axis" in expr.kwargs:
-        kwargs["axis"] = expr.kwargs["axis"]
+    if "dim" in expr.kwargs:
+        kwargs["dim"] = expr.kwargs["dim"]
     return core.Vexpr(op, (child_expr,), kwargs)
 
 core.vectorize_impls.update({
     p.stack_p: stack_vectorize,
-    p.concatenate_p: concatenate_vectorize,
+    p.concat_p: concat_vectorize,
     p.sum_p: partial(reduction_vectorize, p.sum_p),
     p.prod_p: partial(reduction_vectorize, p.prod_p),
 })

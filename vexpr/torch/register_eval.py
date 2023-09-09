@@ -31,16 +31,25 @@ def allow_listlike_arg0(torch_func):
             return torch_func(arg0, *args, **kwargs)
     return wrapper
 
+def listlike_of_tensors(torch_func):
+    def wrapper(arg0, *args, **kwargs):
+        if isinstance(arg0, (list, tuple)):
+            return torch_func([torch.as_tensor(x)
+                               for x in arg0], *args, **kwargs)
+        else:
+            return torch_func(arg0, *args, **kwargs)
+    return wrapper
+
 core.eval_impls.update({
     p.zeros_p: torch.zeros,
     p.ones_p: torch.ones,
-    p.stack_p: torch.stack,
+    p.stack_p: listlike_of_tensors(torch.stack),
     p.concat_p: torch.concat,
     p.moveaxis_p: torch.moveaxis,
     p.reshape_p: torch.reshape,
     p.exp_p: torch.exp,
     p.log_p: torch.log,
-    p.sum_p: torch.sum,
+    p.sum_p: allow_listlike_arg0(torch.sum),
     p.prod_p: allow_listlike_arg0(torch.prod),
     p.cdist_p: torch.cdist,
 })

@@ -367,6 +367,7 @@ def vectorize(f):
     f.alternate_calls.append(call_and_vectorize)
     return f
 
+
 def partial_evaluate(f, inputs):
     """
     If all symbols are specified, the Vexpr is fully evaluated.
