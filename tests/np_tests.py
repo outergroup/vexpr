@@ -46,6 +46,25 @@ class TestVexprNumpyTests(unittest.TestCase):
 
         self._vectorize_test(example_inputs, f, expected)
 
+    def test_prod_to_multiply_at(self):
+        example_inputs = dict(
+            x1=np.full((3, 3), 1.0),
+            x2=np.full((3, 3), 2.0),
+        )
+
+        @vp.vectorize
+        def f(x1, x2):
+            return vnp.stack([vnp.prod([x1, x2], axis=0),
+                              vnp.prod([x1, x2], axis=0)])
+
+        @vp.make_vexpr
+        def expected(x1, x2):
+            return vnp.multiply_at(vnp.ones((2, 3, 3)),
+                                   np.array([0, 0, 1, 1]),
+                                   vnp.stack([x1, x2, x1, x2]))
+
+        self._vectorize_test(example_inputs, f, expected)
+
     def test_sum_vectorize_single(self):
         example_inputs = dict(a=1, b=2)
 

@@ -16,7 +16,7 @@ sum_p, sum = _p_and_constructor("numpy.sum")
 prod_p, prod = _p_and_constructor("numpy.prod")
 # Indexed reductions
 add_at_p, add_at = _p_and_constructor("numpy.add.at")
-prod_at_p, prod_at = _p_and_constructor("numpy.prod.at")
+multiply_at_p, multiply_at = _p_and_constructor("numpy.multiply.at")
 
 
 __all__ = [
@@ -31,5 +31,5 @@ __all__ = [
     "sum",
     "prod",
     "add_at", # TODO somehow change to "add.at"
-    "prod_at", # TODO somehow change to "add.at"
+    "multiply_at", # TODO somehow change to "multiply.at"
 ]

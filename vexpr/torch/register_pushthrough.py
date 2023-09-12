@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 
 import vexpr as vp
@@ -85,7 +87,7 @@ def push_concat_through_getitem(shapes, expr, allow_partial=True):
             select_indices = selection
 
         all_select_axes.append(select_axis)
-        all_select_indices.append(torch.tensor(select_indices))
+        all_select_indices.append(torch.as_tensor(select_indices))
 
     if not all(select_axis == all_select_axes[0] for select_axis in all_select_axes):
         raise NotImplementedError()
@@ -192,38 +194,39 @@ def torch_stack_shape(initial_shape, num_elements, dim=0):
         dim += len(initial_shape) + 1
     return initial_shape[:dim] + (num_elements,) + initial_shape[dim:]
 
-def push_stack_through_sum(shapes, expr, allow_partial=True):
+def push_stack_through_reduction(reduction_p, parallel_reduction, shapes, expr,
+                                 allow_partial=True):
     assert expr.op is p.stack_p
 
     exprs_to_stack = expr.args[0]
-    all_sum_operands = []
+    all_reduction_operands = []
     at_indices = []
 
     stack_axis = expr.kwargs.get("dim", 0)
 
     for i, child_expr in enumerate(exprs_to_stack):
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is p.sum_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op is reduction_p:
 
-            sum_axis = child_expr.kwargs.get("dim", None)
-            if sum_axis is None:
+            r_axis = child_expr.kwargs.get("dim", None)
+            if r_axis is None:
                 raise NotImplementedError()
 
-            sum_arg0 = child_expr.args[0]
-            if isinstance(sum_arg0, vp.Vexpr):
-                num_operands = shapes[id(sum_arg0)][sum_axis]
+            r_arg0 = child_expr.args[0]
+            if isinstance(r_arg0, vp.Vexpr):
+                num_operands = shapes[id(r_arg0)][r_axis]
             else:
-                num_operands = len(sum_arg0)
+                num_operands = len(r_arg0)
                 # treat array_like as an implicit stack.
-                sum_arg0 = vtorch.stack(sum_arg0)
+                r_arg0 = vtorch.stack(r_arg0)
 
-            if sum_axis != stack_axis:
-                prev_shape = shapes[id(sum_arg0)]
-                sum_arg0 = vtorch.moveaxis(sum_arg0, sum_axis, stack_axis)
-                sum_arg0 = core.pushthrough(shapes, sum_arg0, child_expr.op)
-                sum_axis = stack_axis
+            if r_axis != stack_axis:
+                prev_shape = shapes[id(r_arg0)]
+                r_arg0 = vtorch.moveaxis(r_arg0, r_axis, stack_axis)
+                r_arg0 = core.pushthrough(shapes, r_arg0, child_expr.op)
+                r_axis = stack_axis
 
             # Incorporate child_expr's computation into a vectorized reduction.
-            all_sum_operands.append(sum_arg0)
+            all_reduction_operands.append(r_arg0)
             at_indices += [i] * num_operands
         else:
             # Pass child_expr through. Implement Identity as a reduction of 1
@@ -232,7 +235,7 @@ def push_stack_through_sum(shapes, expr, allow_partial=True):
             # TODO is this is gross to do a full vectorize here?
             child_expr = vtorch.stack([child_expr], dim=stack_axis)
             child_expr = core._vectorize(shapes, child_expr)
-            all_sum_operands.append(child_expr)
+            all_reduction_operands.append(child_expr)
             at_indices.append(i)
 
     at_indices = torch.tensor(at_indices)
@@ -242,11 +245,17 @@ def push_stack_through_sum(shapes, expr, allow_partial=True):
     result_shape = torch_stack_shape(child_shape, len(exprs_to_stack),
                                      dim=stack_axis)
 
-    return vtorch.index_add(vtorch.zeros(result_shape),
-                            stack_axis,
-                            at_indices,
-                            core._vectorize(shapes, vtorch.concat(all_sum_operands,
-                                                                  dim=stack_axis)))
+    return parallel_reduction(
+        result_shape, stack_axis, at_indices,
+        core._vectorize(shapes, vtorch.concat(all_reduction_operands,
+                                              dim=stack_axis)))
+
+def parallel_sum(result_shape, dim, index, source):
+    return vtorch.index_add(vtorch.zeros(result_shape), dim, index, source)
+
+def parallel_prod(result_shape, dim, index, source):
+    return vtorch.index_reduce(vtorch.ones(result_shape), dim, index, source,
+                               "prod")
 
 def push_concat_through_truediv(shapes, expr, allow_partial=True):
     assert expr.op is p.concat_p
@@ -376,7 +385,10 @@ def push_concat_through_mul(shapes, expr, allow_partial=True):
 
 core.pushthrough_impls.update({
     (p.concat_p, p.stack_p): push_concat_through_stack,
-    (p.stack_p, p.sum_p): push_stack_through_sum,
+    (p.stack_p, p.sum_p): partial(push_stack_through_reduction, p.sum_p,
+                                  parallel_sum),
+    (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
+                                   parallel_prod),
     (p.concat_p, core.operator_truediv_p): push_concat_through_truediv,
     (p.stack_p, core.operator_mul_p): push_stack_through_mul,
     (p.concat_p, core.operator_mul_p): push_concat_through_mul,

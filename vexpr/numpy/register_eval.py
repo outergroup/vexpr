@@ -29,10 +29,10 @@ core.eval_impls.update({
 def add_at_impl(a, indices, b):
     np.add.at(a, indices, b)
     return a
-def prod_at_impl(a, indices, b):
-    np.prod.at(a, indices, b)
+def multiply_at_impl(a, indices, b):
+    np.multiply.at(a, indices, b)
     return a
 core.eval_impls.update({
     p.add_at_p: add_at_impl,
-    p.prod_at_p: prod_at_impl,
+    p.multiply_at_p: multiply_at_impl,
 })

@@ -191,38 +191,39 @@ def np_stack_shape(initial_shape, num_elements, axis=0):
         axis += len(initial_shape) + 1
     return initial_shape[:axis] + (num_elements,) + initial_shape[axis:]
 
-def push_stack_through_sum(shapes, expr, allow_partial=True):
+def push_stack_through_reduction(reduction_p, parallel_reduction, shapes, expr,
+                                 allow_partial=True):
     assert expr.op is p.stack_p
 
     exprs_to_stack = expr.args[0]
-    all_sum_operands = []
+    all_reduction_operands = []
     at_indices = []
 
     stack_axis = expr.kwargs.get("axis", 0)
 
     for i, child_expr in enumerate(exprs_to_stack):
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is p.sum_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op is reduction_p:
 
-            sum_axis = child_expr.kwargs.get("axis", None)
-            if sum_axis is None:
+            r_axis = child_expr.kwargs.get("axis", None)
+            if r_axis is None:
                 raise NotImplementedError()
 
-            sum_arg0 = child_expr.args[0]
-            if isinstance(sum_arg0, vp.Vexpr):
-                num_operands = shapes[id(sum_arg0)][sum_axis]
+            r_arg0 = child_expr.args[0]
+            if isinstance(r_arg0, vp.Vexpr):
+                num_operands = shapes[id(r_arg0)][r_axis]
             else:
-                num_operands = len(sum_arg0)
+                num_operands = len(r_arg0)
                 # treat array_like as an implicit stack.
-                sum_arg0 = vnp.stack(sum_arg0)
+                r_arg0 = vnp.stack(r_arg0)
 
-            if sum_axis != stack_axis:
-                prev_shape = shapes[id(sum_arg0)]
-                sum_arg0 = vnp.moveaxis(sum_arg0, sum_axis, stack_axis)
-                sum_arg0 = core.pushthrough(shapes, sum_arg0, child_expr.op)
-                sum_axis = stack_axis
+            if r_axis != stack_axis:
+                prev_shape = shapes[id(r_arg0)]
+                r_arg0 = vnp.moveaxis(r_arg0, r_axis, stack_axis)
+                r_arg0 = core.pushthrough(shapes, r_arg0, child_expr.op)
+                r_axis = stack_axis
 
             # Incorporate child_expr's computation into a vectorized reduction.
-            all_sum_operands.append(sum_arg0)
+            all_reduction_operands.append(r_arg0)
             at_indices += [i] * num_operands
         else:
             # Pass child_expr through. Implement Identity as a reduction of 1
@@ -231,7 +232,7 @@ def push_stack_through_sum(shapes, expr, allow_partial=True):
             # TODO is this is gross to do a full vectorize here?
             child_expr = vnp.stack([child_expr], axis=stack_axis)
             child_expr = core._vectorize(shapes, child_expr)
-            all_sum_operands.append(child_expr)
+            all_reduction_operands.append(child_expr)
             at_indices.append(i)
 
     at_indices = np.array(at_indices)
@@ -249,10 +250,17 @@ def push_stack_through_sum(shapes, expr, allow_partial=True):
     result_shape = np_stack_shape(child_shape, len(exprs_to_stack),
                                   axis=stack_axis)
 
-    return vnp.add_at(vnp.zeros(result_shape),
-                      at_indices,
-                      core._vectorize(shapes, vnp.concatenate(all_sum_operands,
+    return parallel_reduction(result_shape,
+                              at_indices,
+                              core._vectorize(shapes,
+                                              vnp.concatenate(all_reduction_operands,
                                                               axis=stack_axis)))
+
+def parallel_sum(result_shape, indices, source):
+    return vnp.add_at(vnp.zeros(result_shape), indices, source)
+
+def parallel_prod(result_shape, indices, source):
+    return vnp.multiply_at(vnp.ones(result_shape), indices, source)
 
 def push_concatenate_through_truediv(shapes, expr, allow_partial=True):
     assert expr.op is p.concatenate_p
@@ -382,7 +390,10 @@ def push_concatenate_through_mul(shapes, expr, allow_partial=True):
 
 core.pushthrough_impls.update({
     (p.concatenate_p, p.stack_p): push_concatenate_through_stack,
-    (p.stack_p, p.sum_p): push_stack_through_sum,
+    (p.stack_p, p.sum_p): partial(push_stack_through_reduction, p.sum_p,
+                                  parallel_sum),
+    (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
+                                   parallel_prod),
     (p.concatenate_p, core.operator_truediv_p): push_concatenate_through_truediv,
     (p.stack_p, core.operator_mul_p): push_stack_through_mul,
     (p.concatenate_p, core.operator_mul_p): push_concatenate_through_mul,
