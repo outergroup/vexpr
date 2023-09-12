@@ -237,23 +237,16 @@ def push_stack_through_sum(shapes, expr, allow_partial=True):
 
     at_indices = torch.tensor(at_indices)
 
-    if stack_axis == 0:
-        pass
-    elif stack_axis < 0:
-        at_indices = (Ellipsis, at_indices,) + (slice(None),) * ((-stack_axis) - 1)
-    else:
-        at_indices = ((slice(None),) * stack_axis) + (at_indices,)
-
     child_shape = next(shapes[id(expr)] for expr in exprs_to_stack
                        if isinstance(expr, vp.Vexpr))
-
     result_shape = torch_stack_shape(child_shape, len(exprs_to_stack),
-                                  dim=stack_axis)
+                                     dim=stack_axis)
 
-    return vtorch.add_at(vtorch.zeros(result_shape),
-                      at_indices,
-                      core._vectorize(shapes, vtorch.concat(all_sum_operands,
-                                                              dim=stack_axis)))
+    return vtorch.index_add(vtorch.zeros(result_shape),
+                            stack_axis,
+                            at_indices,
+                            core._vectorize(shapes, vtorch.concat(all_sum_operands,
+                                                                  dim=stack_axis)))
 
 def push_concat_through_truediv(shapes, expr, allow_partial=True):
     assert expr.op is p.concat_p
@@ -443,7 +436,7 @@ core.pushthrough_impls[(p.stack_p, p.cdist_p)] = push_stack_through_cdist
 
 def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
     assert expr.op is p.concat_p
-    assert all(child_expr.op is vctorch.cdist_multi_p for child_expr in expr.args[0])
+    assert all(child_expr.op is csp_p.cdist_multi_p for child_expr in expr.args[0])
 
     # TODO process this
     concat_axis = expr.kwargs.get("dim", 0)
@@ -452,10 +445,12 @@ def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
     right = []
     lengths = []
     axes = []
+    ps = []
     for child_expr in expr.args[0]:
         left.append(child_expr.args[0])
         right.append(child_expr.args[1])
         lengths.append(child_expr.kwargs["lengths"])
+        ps.append(child_expr.kwargs["ps"])
         axes.append(child_expr.kwargs.get("dim", None))
 
     canonicalized_axes = [(axis if axis is not None else 0)
@@ -469,7 +464,8 @@ def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
     right = core._vectorize(shapes, vtorch.concat(right, dim=-1))
 
     kwargs = dict(
-        lengths=torch.concat(lengths)
+        lengths=torch.concat(lengths),
+        ps=torch.concat(ps),
     )
     if axis is not None:
         kwargs["dim"] = axis

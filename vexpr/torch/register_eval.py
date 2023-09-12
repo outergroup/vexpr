@@ -53,3 +53,15 @@ core.eval_impls.update({
     p.prod_p: allow_listlike_arg0(torch.prod),
     p.cdist_p: torch.cdist,
 })
+
+
+def index_add_impl(a, dim, index, source, *args, **kwargs):
+    return a.index_add_(dim, index, source, *args, **kwargs)
+
+def index_reduce_impl(a, dim, index, source, *args, **kwargs):
+    return a.index_reduce_(dim, index, source, *args, **kwargs)
+
+core.eval_impls.update({
+    p.index_add_p: index_add_impl,
+    p.index_reduce_p: index_reduce_impl,
+})

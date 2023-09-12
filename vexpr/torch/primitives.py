@@ -14,6 +14,9 @@ log_p, log = _p_and_constructor("torch.log")
 # Reduction operators
 sum_p, sum = _p_and_constructor("torch.sum")
 prod_p, prod = _p_and_constructor("torch.prod")
+# Indexed reductions
+index_add_p, index_add = _p_and_constructor("torch.index_add")
+index_reduce_p, index_reduce = _p_and_constructor("torch.index_reduce")
 
 cdist_p, cdist = _p_and_constructor("torch.cdist")
 
@@ -29,4 +32,6 @@ __all__ = [
     "sum",
     "prod",
     "cdist",
+    "index_add",
+    "index_reduce",
 ]
