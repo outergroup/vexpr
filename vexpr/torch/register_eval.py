@@ -56,10 +56,10 @@ core.eval_impls.update({
 
 
 def index_add_impl(a, dim, index, source, *args, **kwargs):
-    return a.index_add_(dim, index, source, *args, **kwargs)
+    return a.index_add(dim, index, source, *args, **kwargs)
 
 def index_reduce_impl(a, dim, index, source, *args, **kwargs):
-    return a.index_reduce_(dim, index, source, *args, **kwargs)
+    return a.index_reduce(dim, index, source, *args, **kwargs)
 
 core.eval_impls.update({
     p.index_add_p: index_add_impl,
