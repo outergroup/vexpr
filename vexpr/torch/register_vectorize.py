@@ -6,11 +6,21 @@ import vexpr.core as core
 import vexpr.torch.primitives as p
 
 
+PRIORITIZED_OPS = set([
+    # Heuristic: Prioritize sums, products, and division.
+    p.sum_p, p.prod_p, core.operator_add_p,
+    core.operator_mul_p, core.operator_truediv_p,
+    p.index_add_p, p.index_reduce_p,
+])
+
+
 def stack_vectorize(shapes, expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
     vexpr_ops = [op for op in vexpr_ops if op is not core.symbol_p]
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
     if len(vexpr_ops) > 0:
         for allow_partial in (False, True):
@@ -32,6 +42,8 @@ def concat_vectorize(shapes, expr):
                                    if isinstance(v, vp.Vexpr)))
 
     vexpr_ops = [op for op in vexpr_ops if op is not core.symbol_p]
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
     # TODO: in general, every user-provided stack (and maybe concat, and
     # other things?) should be pushed through before trying other stuff. they
