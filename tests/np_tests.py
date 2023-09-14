@@ -354,7 +354,7 @@ class TestVexprNumpyTests(unittest.TestCase):
         self._assert_vexprs_equal(f.vexpr, expected_vectorized.vexpr)
 
         inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
-        print(inference_f)
+        # print(inference_f.vexpr)
         self._assert_vexprs_equal(inference_f.vexpr, expected_pe.vexpr)
 
     def _vectorize_test(self, example_inputs, f, expected_after):

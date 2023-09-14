@@ -44,18 +44,14 @@ class Vexpr(NamedTuple):
         return operator_getitem(self, index)
 
     def __repr__(self):
-        """
-        (adapted from pytorch)
-        """
         child_lines = []
 
         if len(self.args) == 1:
-            child_lines.append(pformat(self.args[0]))
+            child_lines += pformat(self.args[0]).split('\n')
         else:
             for arg in self.args:
                 operand_str = pformat(arg) + ","
-                operand_str = _addindent(operand_str, 2)
-                child_lines.append(operand_str)
+                child_lines += operand_str.split('\n')
 
         extra_lines = ([", ".join([f"{k}={repr(v)}"
                                    for k, v in self.kwargs.items()])]
@@ -69,25 +65,11 @@ class Vexpr(NamedTuple):
             if len(lines) == 1:
                 main_str += lines[0]
             else:
-                main_str += '\n  ' + '\n  '.join(lines) + '\n'
+                newline_space = "\n  "
+                main_str += newline_space + newline_space.join(lines) + '\n'
 
         main_str += ')'
         return main_str
-
-
-def _addindent(s_, numSpaces):
-    """
-    (adapted from pytorch)
-    """
-    s = s_.split('\n')
-    # don't do anything for single-line stuff
-    if len(s) == 1:
-        return s_
-    first = s.pop(0)
-    s = [(numSpaces * ' ') + line for line in s]
-    s = '\n'.join(s)
-    s = first + '\n' + s
-    return s
 
 
 ################################################################################
@@ -344,6 +326,8 @@ def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
         shapes[id(sub_expr)] = shape_impl(result)
     result = call(vexpr_caller.vexpr, kwargs, record_shape)
     vexpr_caller.vexpr = _vectorize(shapes, vexpr_caller.vexpr)
+    print("after")
+    print(vexpr_caller.vexpr)
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 
