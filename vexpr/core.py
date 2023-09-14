@@ -263,7 +263,11 @@ def _vectorize(shapes, expr):
 pushthrough_impls = {}
 
 def pushthrough(shapes, expr, child_op, allow_partial=True):
-    impl = pushthrough_impls[(expr.op, child_op)]
+    impl = pushthrough_impls.get((expr.op, child_op), None)
+    if impl is None:
+        print("No vectorization support for", expr.op, child_op)
+        raise CannotVectorize()
+
     return impl(shapes, expr, allow_partial)
 
 

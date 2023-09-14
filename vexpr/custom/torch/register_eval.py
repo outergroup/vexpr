@@ -27,7 +27,7 @@ def index_add_into_zeros_impl(n_sums, dim, index, source, *args, **kwargs):
     shape = list(source.shape)
     shape[dim] = n_sums
     shape = tuple(shape)
-    ret = torch.zeros(shape)
+    ret = torch.zeros(shape, dtype=source.dtype, device=source.device)
     return ret.index_add(dim, index, source, *args, **kwargs)
 
 core.eval_impls[p.index_add_into_zeros_p] = index_add_into_zeros_impl
@@ -37,7 +37,13 @@ def index_reduce_into_ones_impl(n_reductions, dim, index, source, *args, **kwarg
     shape = list(source.shape)
     shape[dim] = n_reductions
     shape = tuple(shape)
-    ret = torch.ones(shape)
+    ret = torch.ones(shape, dtype=source.dtype, device=source.device)
     return ret.index_reduce(dim, index, source, *args, **kwargs)
 
 core.eval_impls[p.index_reduce_into_ones_p] = index_reduce_into_ones_impl
+
+
+def heads_tails_impl(alpha, dim=0):
+    return torch.stack([alpha, 1.0 - alpha], dim=dim)
+
+core.eval_impls[p.heads_tails_p] = heads_tails_impl

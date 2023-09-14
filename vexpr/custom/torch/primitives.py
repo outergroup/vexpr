@@ -8,10 +8,12 @@ cdist_multi_p, cdist_multi = _p_and_constructor("custom.torch.cdist_multi")
 index_add_into_zeros_p, index_add_into_zeros = _p_and_constructor("custom.torch.index_add_into_zeros")
 index_reduce_into_ones_p, index_reduce_into_ones = _p_and_constructor("custom.torch.index_reduce_into_ones")
 
+heads_tails_p, heads_tails = _p_and_constructor("custom.torch.heads_tails")
 
 __all__ = [
     "shuffle",
     "cdist_multi",
     "index_add_into_zeros",
     "index_reduce_into_ones",
+    "heads_tails",
 ]
