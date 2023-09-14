@@ -20,7 +20,7 @@ def stack_vectorize(shapes, expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
-    vexpr_ops = [op for op in vexpr_ops if op is not core.symbol_p]
+    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
@@ -43,7 +43,7 @@ def concat_vectorize(shapes, expr):
                                    for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
 
-    vexpr_ops = [op for op in vexpr_ops if op is not core.symbol_p]
+    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
@@ -67,7 +67,7 @@ def concat_vectorize(shapes, expr):
             child_exprs = []
             changed = False
             for child_expr in expr.args[0]:
-                if child_expr.op is p.stack_p:
+                if child_expr.op == p.stack_p:
                     try:
                         child_expr2 = core._vectorize(shapes, child_expr)
                         # TODO find a faster way of doing this. probably make
@@ -94,7 +94,7 @@ def concat_vectorize(shapes, expr):
     return expr
 
 def reduction_vectorize(op, shapes, expr):
-    assert expr.op is op
+    assert expr.op == op
     # TODO handle dim?
     child_expr = expr.args[0]
     if not isinstance(child_expr, core.Vexpr):

@@ -9,8 +9,8 @@ from vexpr.custom.scipy import cdist_multi
 from . import primitives as p
 
 def push_stack_through_cdist(shapes, expr, allow_partial=True):
-    assert expr.op is np_p.stack_p
-    assert all(child_expr.op is p.cdist_p for child_expr in expr.args[0])
+    assert expr.op == np_p.stack_p
+    assert all(child_expr.op == p.cdist_p for child_expr in expr.args[0])
 
     # TODO process this
     stack_axis = expr.kwargs.get("axis", 0)
@@ -57,8 +57,8 @@ core.pushthrough_impls[(np_p.stack_p, p.cdist_p)] = push_stack_through_cdist
 
 
 def push_concatenate_through_cdist_multi(shapes, expr, allow_partial=True):
-    assert expr.op is np_p.concatenate_p
-    assert all(child_expr.op is csp_p.cdist_multi_p for child_expr in expr.args[0])
+    assert expr.op == np_p.concatenate_p
+    assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
     # TODO process this
     concat_axis = expr.kwargs.get("axis", 0)

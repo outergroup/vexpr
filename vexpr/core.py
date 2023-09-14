@@ -95,9 +95,9 @@ def call(expr, context, callback=None):
     if not isinstance(expr, Vexpr):
         raise ValueError(expr)
 
-    if expr.op is symbol_p:
+    if expr.op == symbol_p:
         result = context[expr.args[0]]
-    elif expr.op is let_p:
+    elif expr.op == let_p:
         context2 = dict(context)
         for symbol, v in expr.args[0]:
             name = (symbol if isinstance(symbol, str) else symbol.args[0])
@@ -185,13 +185,13 @@ def partial_evaluate_(expr, context):
     if not isinstance(expr, Vexpr):
         raise ValueError(expr)
 
-    if expr.op is symbol_p:
+    if expr.op == symbol_p:
         name = expr.args[0]
         if name in context:
             return context[expr.args[0]]
         else:
             return expr
-    elif expr.op is let_p:
+    elif expr.op == let_p:
         context2 = dict(context)
         for symbol, v in expr.args[0]:
             name = (symbol if isinstance(symbol, str) else symbol.args[0])

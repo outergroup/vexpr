@@ -12,8 +12,8 @@ from vexpr.torch.utils import torch_concat_shape, torch_stack_shape
 
 
 def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
-    assert all(child_expr.op is csp_p.cdist_multi_p for child_expr in expr.args[0])
+    assert expr.op == p.concat_p
+    assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
     # TODO process this
     concat_axis = expr.kwargs.get("dim", 0)
@@ -61,14 +61,14 @@ core.pushthrough_impls[(p.concat_p, csp_p.cdist_multi_p)] = push_concat_through_
 def push_concat_through_index_reduction_into(
         index_reduction_into_p, parallel_reduction,
         shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     concat_dim = expr.kwargs.get("dim", 0)
 
     index_reduction_dims = [child_expr.kwargs.get("dim", 0)
                             for child_expr in expr.args[0]
                             if isinstance(child_expr, vp.Vexpr)
-                            and child_expr.op is index_reduction_into_p]
+                            and child_expr.op == index_reduction_into_p]
     assert all(dim == index_reduction_dims[0] for dim in index_reduction_dims)
     index_reduction_dim = index_reduction_dims[0]
 
@@ -79,7 +79,7 @@ def push_concat_through_index_reduction_into(
         child_shape = shapes[id(child_expr)]
         num_results = child_shape[concat_dim]
         if isinstance(child_expr, vp.Vexpr) \
-           and child_expr.op is index_reduction_into_p:
+           and child_expr.op == index_reduction_into_p:
             grandchildren.append(child_expr.args[3])
             indices.append(child_expr.args[2] + base)
             base += num_results

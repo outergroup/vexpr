@@ -19,21 +19,21 @@ def canonical_axis(axis, ndim):
         return axis
 
 def push_concat_through_getitem(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
     # they are the same symbol.
     # TODO: if any child is not a getitem, then push through all the getitems,
     # concat with the non-getitems, and insert a shuffle after everything
     # to correct the order.
-    if not all(sub_expr.op is core.operator_getitem_p
+    if not all(sub_expr.op == core.operator_getitem_p
                for sub_expr in expr.args[0]):
         raise NotImplementedError()
 
     select_targets = [sub_expr.args[0]
                       for sub_expr in expr.args[0]]
     select_target = select_targets[0]
-    if not all(target.op is core.symbol_p for target in select_targets):
+    if not all(target.op == core.symbol_p for target in select_targets):
         raise NotImplementedError()
     if not all(target == select_target
                for target in select_targets):
@@ -117,8 +117,8 @@ core.pushthrough_impls.update({
 
 
 def push_moveaxis_through_stack(shapes, expr, allow_partial=True):
-    assert expr.op is p.moveaxis_p
-    assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op is p.stack_p
+    assert expr.op == p.moveaxis_p
+    assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.stack_p
 
     source = expr.args[1]
     stack_expr = expr.args[0]
@@ -138,10 +138,10 @@ def push_moveaxis_through_stack(shapes, expr, allow_partial=True):
 
 def push_concat_through_zeros_ones(zeros_ones_p, zeros_ones,
                                    shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     # initial hack: assume all args are same op
-    assert all(isinstance(arg, vp.Vexpr) and arg.op is zeros_ones_p
+    assert all(isinstance(arg, vp.Vexpr) and arg.op == zeros_ones_p
                for arg in expr.args[0])
 
     dim = expr.kwargs.get("dim", 0)
@@ -157,8 +157,8 @@ core.pushthrough_impls.update({
 })
 
 def push_moveaxis_through_sum(shapes, expr, allow_partial=True):
-    assert expr.op is p.moveaxis_p
-    assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op is p.sum_p
+    assert expr.op == p.moveaxis_p
+    assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.sum_p
 
     sum_expr = expr.args[0]
     sum_arg0 = sum_expr.args[0]
@@ -185,10 +185,10 @@ core.pushthrough_impls.update({
 
 
 def push_concat_through_stack(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     # initial hack: assume all args are stack_p
-    assert all(isinstance(arg, vp.Vexpr) and arg.op is p.stack_p
+    assert all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
                for arg in expr.args[0])
     assert expr.kwargs.get("dim", 0) == 0
 
@@ -206,19 +206,19 @@ def push_concat_through_stack(shapes, expr, allow_partial=True):
     return expr
 
 def push_concat_through_concat(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     concat_dims = [child_expr.kwargs.get("dim", 0)
                      for child_expr in expr.args[0]
                         if isinstance(child_expr, vp.Vexpr)
-                   and child_expr.op is p.concat_p]
+                   and child_expr.op == p.concat_p]
     assert all(concat_dim == concat_dims[0] for concat_dim in concat_dims)
     concat_dim = concat_dims[0]
 
     # todo push vectorize through children
     all_concat_vexprs = []
     for child_expr in expr.args[0]:
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is p.concat_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == p.concat_p:
             all_concat_vexprs.extend(child_expr.args[0])
         else:
             all_concat_vexprs.append(child_expr)
@@ -229,7 +229,7 @@ def push_concat_through_concat(shapes, expr, allow_partial=True):
 
 def push_stack_through_reduction(reduction_p, parallel_reduction, shapes, expr,
                                  allow_partial=True):
-    assert expr.op is p.stack_p
+    assert expr.op == p.stack_p
 
     exprs_to_stack = expr.args[0]
     all_reduction_operands = []
@@ -238,7 +238,7 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, shapes, expr,
     stack_axis = expr.kwargs.get("dim", 0)
 
     for i, child_expr in enumerate(exprs_to_stack):
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is reduction_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == reduction_p:
 
             r_axis = child_expr.kwargs.get("dim", None)
             if r_axis is None:
@@ -296,14 +296,14 @@ def parallel_prod(num_reductions, dim, index, source):
 
 def push_concat_through_index_reduction(index_reduction_p, parallel_reduction,
                                         shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     concat_dim = expr.kwargs.get("dim", 0)
 
     index_reduction_dims = [child_expr.kwargs.get("dim", 0)
                       for child_expr in expr.args[0]
                       if isinstance(child_expr, vp.Vexpr)
-                            and child_expr.op is index_reduction_p]
+                            and child_expr.op == index_reduction_p]
     assert all(dim == index_reduction_dims[0] for dim in index_reduction_dims)
     index_reduction_dim = index_reduction_dims[0]
 
@@ -314,7 +314,7 @@ def push_concat_through_index_reduction(index_reduction_p, parallel_reduction,
     for child_expr in expr.args[0]:
         child_shape = shapes[id(child_expr)]
         num_results = child_shape[concat_dim]
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is index_reduction_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == index_reduction_p:
             target.append(child_expr.args[0])
             grandchildren.append(child_expr.args[3])
             indices.append(child_expr.args[2] + base)
@@ -343,14 +343,14 @@ def parallel_prod2(target, dim, index, source):
 
 
 def push_concat_through_truediv(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     # initial hack: assume all args are truediv
     #
     # TODO: add similar treatment of "*_through_mul", dividing by 1.0. It's
     # easier than mul, since it's unambiguous; we can always put 1.0 in the
     # denominator.
-    assert all(isinstance(arg, vp.Vexpr) and arg.op is core.operator_truediv_p
+    assert all(isinstance(arg, vp.Vexpr) and arg.op == core.operator_truediv_p
                for arg in expr.args[0])
 
     num = []
@@ -366,12 +366,12 @@ def push_concat_through_truediv(shapes, expr, allow_partial=True):
     return num / den
 
 def push_stack_through_mul(shapes, expr, allow_partial=True):
-    assert expr.op is p.stack_p
+    assert expr.op == p.stack_p
 
     left = []
     right = []
     for child_expr in expr.args[0]:
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is core.operator_mul_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == core.operator_mul_p:
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
         else:
@@ -440,7 +440,7 @@ def push_stack_through_mul(shapes, expr, allow_partial=True):
     return left * right
 
 def push_concat_through_mul(shapes, expr, allow_partial=True):
-    assert expr.op is p.concat_p
+    assert expr.op == p.concat_p
 
     axis = expr.kwargs.get("dim", 0)
 
@@ -451,7 +451,7 @@ def push_concat_through_mul(shapes, expr, allow_partial=True):
     left = []
     right = []
     for child_expr in expr.args[0]:
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op is core.operator_mul_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == core.operator_mul_p:
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
         else:
@@ -494,8 +494,8 @@ core.pushthrough_impls.update({
 
 
 def push_stack_through_cdist(shapes, expr, allow_partial=True):
-    assert expr.op is p.stack_p
-    assert all(child_expr.op is p.cdist_p for child_expr in expr.args[0])
+    assert expr.op == p.stack_p
+    assert all(child_expr.op == p.cdist_p for child_expr in expr.args[0])
 
     # TODO process this
     stack_axis = expr.kwargs.get("dim", 0)
