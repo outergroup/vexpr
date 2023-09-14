@@ -4,6 +4,7 @@ import vexpr as vp
 import vexpr.torch as vtorch
 import vexpr.core as core
 import vexpr.torch.primitives as p
+import vexpr.custom.torch.primitives as cp
 
 
 PRIORITIZED_OPS = set([
@@ -11,6 +12,7 @@ PRIORITIZED_OPS = set([
     p.sum_p, p.prod_p, core.operator_add_p,
     core.operator_mul_p, core.operator_truediv_p,
     p.index_add_p, p.index_reduce_p,
+    cp.index_add_into_zeros_p, cp.index_reduce_into_ones_p,
 ])
 
 
