@@ -65,7 +65,7 @@ def push_concat_through_index_reduction_into(
 
     concat_dim = expr.kwargs.get("dim", 0)
 
-    index_reduction_dims = [child_expr.kwargs.get("dim", 0)
+    index_reduction_dims = [child_expr.args[1]
                             for child_expr in expr.args[0]
                             if isinstance(child_expr, vp.Vexpr)
                             and child_expr.op == index_reduction_into_p]

@@ -209,8 +209,8 @@ def push_concat_through_concat(shapes, expr, allow_partial=True):
     assert expr.op == p.concat_p
 
     concat_dims = [child_expr.kwargs.get("dim", 0)
-                     for child_expr in expr.args[0]
-                        if isinstance(child_expr, vp.Vexpr)
+                   for child_expr in expr.args[0]
+                   if isinstance(child_expr, vp.Vexpr)
                    and child_expr.op == p.concat_p]
     assert all(concat_dim == concat_dims[0] for concat_dim in concat_dims)
     concat_dim = concat_dims[0]
@@ -300,9 +300,9 @@ def push_concat_through_index_reduction(index_reduction_p, parallel_reduction,
 
     concat_dim = expr.kwargs.get("dim", 0)
 
-    index_reduction_dims = [child_expr.kwargs.get("dim", 0)
-                      for child_expr in expr.args[0]
-                      if isinstance(child_expr, vp.Vexpr)
+    index_reduction_dims = [child_expr.args[1]
+                            for child_expr in expr.args[0]
+                            if isinstance(child_expr, vp.Vexpr)
                             and child_expr.op == index_reduction_p]
     assert all(dim == index_reduction_dims[0] for dim in index_reduction_dims)
     index_reduction_dim = index_reduction_dims[0]
