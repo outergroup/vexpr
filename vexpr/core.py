@@ -37,6 +37,9 @@ class Vexpr(NamedTuple):
     def __pow__(self, other):
         return operator_pow(self, other)
 
+    def __matmul__(self, other):
+        return operator_matmul(self, other)
+
     def __neg__(self):
         return operator_neg(self)
 
@@ -153,6 +156,7 @@ operator_add_p, operator_add = _p_and_constructor("operator.add")
 operator_mul_p, operator_mul = _p_and_constructor("operator.mul")
 operator_truediv_p, operator_truediv = _p_and_constructor("operator.truediv")
 operator_pow_p, operator_pow = _p_and_constructor("operator.pow")
+operator_matmul_p, operator_matmul = _p_and_constructor("operator.matmul")
 operator_neg_p, operator_neg = _p_and_constructor("operator.neg")
 operator_getitem_p, operator_getitem = _p_and_constructor("operator.getitem")
 
@@ -170,6 +174,7 @@ eval_impls.update({
     operator_mul_p: operator.mul,
     operator_truediv_p: operator.truediv,
     operator_pow_p: operator.pow,
+    operator_matmul_p: operator.matmul,
     operator_neg_p: operator.neg,
     operator_getitem_p: operator.getitem,
 })
@@ -254,6 +259,7 @@ vectorize_impls = {}
 def _vectorize(shapes, expr):
     impl = vectorize_impls.get(expr.op, None)
     if impl is None:
+        print("No vectorization support for", expr.op)
         return expr
     else:
         return impl(shapes, expr)
@@ -284,6 +290,7 @@ vectorize_impls.update({
     operator_mul_p: operator_vectorize,
     operator_truediv_p: operator_vectorize,
     operator_pow_p: operator_vectorize,
+    operator_matmul_p: operator_vectorize,
     operator_neg_p: operator_vectorize,
     operator_getitem_p: operator_vectorize,
 })
@@ -330,8 +337,6 @@ def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
         shapes[id(sub_expr)] = shape_impl(result)
     result = call(vexpr_caller.vexpr, kwargs, record_shape)
     vexpr_caller.vexpr = _vectorize(shapes, vexpr_caller.vexpr)
-    print("after")
-    print(vexpr_caller.vexpr)
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 
