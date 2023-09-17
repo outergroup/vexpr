@@ -124,13 +124,20 @@ def push_moveaxis_through_stack(shapes, expr, allow_partial=True):
     stack_expr = expr.args[0]
     stack_axis = stack_expr.kwargs.get("dim", 0)
 
-    ndim = len(shapes[id(stack_expr)])
+    orig_stack_shape = shapes[id(stack_expr)]
+    ndim = len(orig_stack_shape)
     if source < 0: source += ndim
     if stack_axis < 0: stack_axis += ndim
 
     if stack_axis == source:
         dest = expr.args[2]
-        return vtorch.stack(stack_expr.args[0], dim=dest)
+        ret = vtorch.stack(stack_expr.args[0], dim=dest)
+        new_shape = list(orig_stack_shap)
+        tmp = new_shape[source]
+        new_shape[source] = new_shape[dest]
+        new_shape[dest] = tmp
+        shapes[id(ret)] = tuple(new_shape)
+        return ret
     else:
         # don't attempt, leave the moveaxis where it is
         return expr
@@ -164,6 +171,9 @@ def push_moveaxis_through_sum(shapes, expr, allow_partial=True):
     sum_arg0 = sum_expr.args[0]
     if not isinstance(sum_arg0, vp.Vexpr):
         sum_arg0 = vtorch.stack(sum_arg0)
+        shapes[id(sum_arg0)] = torch_stack_shape(shapes[id(sum_expr.args[0])],
+                                                 len(sum_arg0),
+                                                 dim=0)
 
     source = expr.args[1]
     dest = expr.args[2]
@@ -249,8 +259,11 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, shapes, expr,
                 num_operands = shapes[id(r_arg0)][r_axis]
             else:
                 num_operands = len(r_arg0)
+                operand0_shape = shapes[id(r_arg0[0])]
                 # treat array_like as an implicit stack.
                 r_arg0 = vtorch.stack(r_arg0)
+                shapes[id(r_arg0)] = torch_stack_shape(operand0_shape,
+                                                       num_operands)
 
             if r_axis != stack_axis:
                 prev_shape = shapes[id(r_arg0)]
