@@ -45,7 +45,7 @@ def shape(expr):
     return impl(expr)
 
 
-def evaluate_args(args, context, container=tuple):
+def evaluate_args(args, context):
     args_with_metadata = []
     evaluated_args = []
 
@@ -56,14 +56,14 @@ def evaluate_args(args, context, container=tuple):
             evaluated_args.append(v)
         elif isinstance(arg, (list, tuple)):
             (sub_args_with_metadata,
-             sub_evaluated_args) = evaluate_args(arg, context,
-                                                 container=type(arg))
+             sub_evaluated_args) = evaluate_args(arg, context)
             args_with_metadata.append(sub_args_with_metadata)
             evaluated_args.append(sub_evaluated_args)
         else:
             evaluated_args.append(arg)
             args_with_metadata.append(arg)
 
+    container = type(args)
     return container(args_with_metadata), container(evaluated_args)
 
 

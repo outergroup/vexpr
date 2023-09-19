@@ -90,15 +90,6 @@ let = lambda bindings, expr: Vexpr(let_p, (bindings, expr), {})
 # The Vexpr interpreter
 ################################################################################
 
-def evaluate_args(args, context, container=tuple):
-    return container((call(arg, context)
-                      if isinstance(arg, Vexpr)
-                      else (evaluate_args(arg, context, container=type(arg))
-                            if isinstance(arg, (list, tuple))
-                            else arg))
-                     for arg in args)
-
-
 eval_impls = {}
 def call(expr, context):
     """
@@ -121,6 +112,16 @@ def call(expr, context):
         result = impl(*args, **expr.kwargs)
 
     return result
+
+
+def evaluate_args(args, context, call_fn=call):
+    container = type(args)
+    return container((call_fn(arg, context)
+                      if isinstance(arg, Vexpr)
+                      else (evaluate_args(arg, context, call_fn)
+                            if isinstance(arg, (list, tuple))
+                            else arg))
+                     for arg in args)
 
 
 ################################################################################
@@ -176,6 +177,7 @@ eval_impls.update({
 # Vexprs partial evaluation
 ################################################################################
 
+
 # this is essentially an alternate interpreter which only evaluates an operator
 # if its children can be evaluated, given the provided inputs.
 def partial_evaluate_(expr, context):
@@ -198,21 +200,7 @@ def partial_evaluate_(expr, context):
         return partial_evaluate_(expr.args[1], context2)
     else:
         impl = eval_impls[expr.op]
-
-        # Evaluate Vexprs in the arguments, down to one level deep. Thus we
-        # allow lists of Vexprs as args. We could replace this with JAX's
-        # tree_map if we want to support arbitrary pytrees, but for now we're
-        # avoiding the JAX dependency. (Also that's awkward with Vexprs, which
-        # are technically tuples, hence aren't pytree leafs by default.)
-        f = partial(partial_evaluate_, context=context)
-        args = tuple((f(arg)
-                     if isinstance(arg, Vexpr)
-                     else (type(arg)((f(v)
-                                      if isinstance(v, Vexpr)
-                                      else v) for v in arg)
-                           if isinstance(arg, (list, tuple))
-                           else arg))
-                     for arg in expr.args)
+        args = evaluate_args(expr.args, context, partial_evaluate_)
 
         ready = True
         for arg in args:
