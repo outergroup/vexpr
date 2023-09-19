@@ -4,7 +4,7 @@ Vexpr ("**V**ectorizable **expr**ession", pronounced "Vexper") is a library that
 
 Built-in `Vexpr` transformations include:
 
-- **Vectorization:** Given a human-written expression, return an equivalent expression that uses parallel, vectorized operations. The primary use case for Vexpr's vectorization is when writing "wide" compositional expressions, i.e. expressions with multiple parallel branches with similar operations occurring on those branches. In these scenarios, Vexpr makes it possible to write the code in a readable, compositional way without giving up the performance benefits of vectorized code. Compositionality creates opportunities for library development.
+- **Vectorization:** Given a human-written expression, return an equivalent expression that uses parallel, vectorized operations. The primary use case for Vexpr's vectorization is when writing "wide" compositional expressions, i.e. expressions with multiple parallel tree branches with similar operations occurring on those branches. In these scenarios, Vexpr makes it possible to write the code in a readable, compositional way without giving up the performance benefits of vectorized code. Compositionality creates opportunities for library development.
 - **Partial evaluation:** Given an expression and some of its inputs, return a new partially evaluated expression. Partial evaluation enables you to write code that is flexible to more use cases. If you have a function `f(a,b)`, some of your users may want to hold `a` constant and try many different `b` values, while other users may want to hold `b` constant. When you express your `f` as a `Vexpr` object, it is automatically optimized to both of these scenarios.
 
 
@@ -203,4 +203,4 @@ Writing Vexpr expressions is like using a programming language that doesn't supp
 
 Vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch's `torch.compile`. Vexpr's job is to compile your program down to an efficient set of numpy/pytorch/JAX operations, and then those frameworks' compilers go further.
 
-Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expression are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
+Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expressions are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.

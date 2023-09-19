@@ -87,11 +87,20 @@ let = lambda bindings, expr: Vexpr(let_p, (bindings, expr), {})
 
 
 ################################################################################
-# The numpy Vexpr interpreter
+# The Vexpr interpreter
 ################################################################################
 
+def evaluate_args(args, context, container=tuple):
+    return container((call(arg, context)
+                      if isinstance(arg, Vexpr)
+                      else (evaluate_args(arg, context, container=type(arg))
+                            if isinstance(arg, (list, tuple))
+                            else arg))
+                     for arg in args)
+
+
 eval_impls = {}
-def call(expr, context, callback=None):
+def call(expr, context):
     """
     This function implements the Vexpr interpreter.
     """
@@ -104,32 +113,12 @@ def call(expr, context, callback=None):
         context2 = dict(context)
         for symbol, v in expr.args[0]:
             name = (symbol if isinstance(symbol, str) else symbol.args[0])
-            context2[name] = call(v, context2, callback)
-        result = call(expr.args[1], context2, callback)
+            context2[name] = call(v, context2)
+        result = call(expr.args[1], context2)
     else:
         impl = eval_impls[expr.op]
-
-        # Evaluate Vexprs in the arguments, down to one level deep. Thus we
-        # allow lists of Vexprs as args. We could replace this with JAX's
-        # tree_map if we want to support arbitrary pytrees, but for now we're
-        # avoiding the JAX dependency. (Also that's awkward with Vexprs, which
-        # are technically tuples, hence aren't pytree leafs by default.)
-        f = partial(call, context=context, callback=callback)
-        args = tuple((f(arg)
-                     if isinstance(arg, Vexpr)
-                     else (type(arg)((f(v) if isinstance(v, Vexpr) else v)
-                                     for v in arg)
-                           if isinstance(arg, (list, tuple))
-                           else arg))
-                     for arg in expr.args)
-
-        # args = tree_map(f, expr.args,
-        #                 is_leaf=lambda x: not isinstance(x, (list, tuple, dict)) or isinstance(x, Vexpr))
-        # args = [call(arg, context, callback) for arg in expr.args]
+        args = evaluate_args(expr.args, context)
         result = impl(*args, **expr.kwargs)
-
-    if callback is not None:
-        callback(expr, result)
 
     return result
 
