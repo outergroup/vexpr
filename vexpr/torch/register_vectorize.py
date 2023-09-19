@@ -5,18 +5,20 @@ import vexpr.torch as vtorch
 import vexpr.core as core
 import vexpr.torch.primitives as p
 import vexpr.custom.torch.primitives as cp
-
+import vexpr.vectorization
+from vexpr.vectorization import _vectorize
 
 PRIORITIZED_OPS = set([
     # Heuristic: Prioritize sums, products, and division.
     p.sum_p, p.prod_p, core.operator_add_p,
     core.operator_mul_p, core.operator_truediv_p,
+    core.operator_matmul_p,
     p.index_add_p, p.index_reduce_p,
     cp.index_add_into_zeros_p, cp.index_reduce_into_ones_p,
 ])
 
 
-def stack_vectorize(shapes, expr):
+def stack_vectorize(expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
@@ -28,16 +30,16 @@ def stack_vectorize(shapes, expr):
         for allow_partial in (False, True):
             for op in vexpr_ops:
                 try:
-                    return core.pushthrough(shapes, expr, op,
+                    return vexpr.vectorization.pushthrough(expr, op,
                                             allow_partial=allow_partial)
-                except core.CannotVectorize:
+                except vexpr.vectorization.CannotVectorize:
                     pass
 
     return expr
 
 
 # TODO: obviously, understand which of these impls should be the same.
-def concat_vectorize(shapes, expr):
+def concat_vectorize(expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op
                                    for v in expr.args[0]
@@ -69,43 +71,43 @@ def concat_vectorize(shapes, expr):
             for child_expr in expr.args[0]:
                 if child_expr.op == p.stack_p:
                     try:
-                        child_expr2 = core._vectorize(shapes, child_expr)
+                        child_expr2 = _vectorize(child_expr)
                         # TODO find a faster way of doing this. probably make
                         # _vectorize indicate whether anything changed, perhaps
                         # always throwing CannotVectorize if no change occurs.
                         if child_expr != child_expr2:
                             child_expr = child_expr2
                             changed = True
-                    except core.CannotVectorize:
+                    except vexpr.vectorization.CannotVectorize:
                         pass
                 child_exprs.append(child_expr)
             if changed:
                 expr = vtorch.concat(child_exprs, **expr.kwargs)
-                return concat_vectorize(shapes, expr)
+                return concat_vectorize(expr)
 
         for allow_partial in (False, True):
             for op in vexpr_ops:
                 try:
-                    return core.pushthrough(shapes, expr, op,
+                    return vexpr.vectorization.pushthrough(expr, op,
                                             allow_partial=allow_partial)
-                except core.CannotVectorize:
+                except vexpr.vectorization.CannotVectorize:
                     pass
 
     return expr
 
-def reduction_vectorize(op, shapes, expr):
+def reduction_vectorize(op, expr):
     assert expr.op == op
     # TODO handle dim?
     child_expr = expr.args[0]
     if not isinstance(child_expr, core.Vexpr):
         child_expr = vtorch.stack(expr.args[0])
-    child_expr = core._vectorize(shapes, child_expr)
+    child_expr = _vectorize(child_expr)
     kwargs = {}
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
     return core.Vexpr(op, (child_expr,), kwargs)
 
-core.vectorize_impls.update({
+vexpr.vectorization.vectorize_impls.update({
     p.stack_p: stack_vectorize,
     p.concat_p: concat_vectorize,
     p.sum_p: partial(reduction_vectorize, p.sum_p),

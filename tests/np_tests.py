@@ -281,14 +281,14 @@ class TestVexprNumpyTests(unittest.TestCase):
                               vnp.stack([x1, x2, x1, x2]))
 
 
-        import vexpr.core as core
+        import vexpr.vectorization as v
         import vexpr.numpy.primitives as np_p
-        orig = core.vectorize_impls[np_p.stack_p]
+        orig = v.vectorize_impls[np_p.stack_p]
         trace = [False]
-        def traced_vectorize(shapes, expr):
+        def traced_vectorize(expr):
             trace[0] = True
-            return orig(shapes, expr)
-        core.vectorize_impls[np_p.stack_p] = traced_vectorize
+            return orig(expr)
+        v.vectorize_impls[np_p.stack_p] = traced_vectorize
 
         # first call should vectorize
         f(**example_inputs)
@@ -296,13 +296,13 @@ class TestVexprNumpyTests(unittest.TestCase):
         self._assert_vexprs_equal(f.vexpr, expected.vexpr)
 
         # subsequent calls should not
-        assert np_p.add_at_p not in core.vectorize_impls  # update test if this changes
+        assert np_p.add_at_p not in v.vectorize_impls  # update test if this changes
         trace = [False]
-        def traced_add_at_vectorize(shapes, expr):
+        def traced_add_at_vectorize(expr):
             trace[0] = True
             return expr
 
-        core.vectorize_impls[np_p.add_at_p] = traced_add_at_vectorize
+        v.vectorize_impls[np_p.add_at_p] = traced_add_at_vectorize
         f(**example_inputs)
         self.assertFalse(trace[0])
 

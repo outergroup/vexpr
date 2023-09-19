@@ -19,8 +19,8 @@ class Vexpr(NamedTuple):
     args: tuple
     kwargs: dict
 
-    def __call__(self, **kwargs):
-        return call(self, kwargs)
+    def __call__(self, *args, **kwargs):
+        return operator_call(self, *args, **kwargs)
 
     def __add__(self, other):
         return operator_add(self, other)
@@ -117,11 +117,10 @@ def call(expr, context, callback=None):
         f = partial(call, context=context, callback=callback)
         args = tuple((f(arg)
                      if isinstance(arg, Vexpr)
-                     else (type(arg)((f(v)
-                                     if isinstance(v, Vexpr)
-                                     else v) for v in arg)
-                         if isinstance(arg, (list, tuple))
-                         else arg))
+                     else (type(arg)((f(v) if isinstance(v, Vexpr) else v)
+                                     for v in arg)
+                           if isinstance(arg, (list, tuple))
+                           else arg))
                      for arg in expr.args)
 
         # args = tree_map(f, expr.args,
@@ -135,12 +134,6 @@ def call(expr, context, callback=None):
     return result
 
 
-shape_impls = {
-    int: lambda _: (),
-    float: lambda _: (),
-}
-
-
 ################################################################################
 # Built-in primitives
 ################################################################################
@@ -152,6 +145,7 @@ def _p_and_constructor(name):
     return p, construct_vexpr
 
 # Python language primitives
+operator_call_p, operator_call = _p_and_constructor("operator.call")
 operator_add_p, operator_add = _p_and_constructor("operator.add")
 operator_mul_p, operator_mul = _p_and_constructor("operator.mul")
 operator_truediv_p, operator_truediv = _p_and_constructor("operator.truediv")
@@ -169,6 +163,14 @@ constant = lambda value: Vexpr(constant_p, (value,), {})
 
 import operator
 
+
+if hasattr(operator, "call"):
+    # This exists in Python 3.11+
+    operator_call_impl = operator.call
+else:
+    def operator_call_impl(f, *args, **kwargs):
+        return f(*args, **kwargs)
+
 eval_impls.update({
     operator_add_p: operator.add,
     operator_mul_p: operator.mul,
@@ -177,6 +179,7 @@ eval_impls.update({
     operator_matmul_p: operator.matmul,
     operator_neg_p: operator.neg,
     operator_getitem_p: operator.getitem,
+    operator_call_p: operator_call_impl,
 })
 
 
@@ -237,68 +240,6 @@ def partial_evaluate_(expr, context):
             return Vexpr(expr.op, args, expr.kwargs)
 
 
-################################################################################
-# Vexpr's vectorizor
-#
-# To vectorize an expression, we start from the root node and for each arg we
-# move downward through the tree, attempting to convert each level into an
-# operation on a single array. The process typically starts by taking an
-# expression and wrapping each of its aruments with a "stack" operation, then
-# attempting a "pushthrough" of that stack operation through that argument's
-# descendants. As the "stack" operation pushes through each level, its effect
-# changes; for example, when you pushthrough a "stack" through an array of
-# "sum"s, the logic should then pushthrough a "concatenate" through the sums'
-# children. This pushthrough logic is specified by for op-child_op pairs via
-# pushthrough_impls.
-################################################################################
-
-
-# {op: f(shapes, expr)}
-vectorize_impls = {}
-
-def _vectorize(shapes, expr):
-    impl = vectorize_impls.get(expr.op, None)
-    if impl is None:
-        print("No vectorization support for", expr.op)
-        return expr
-    else:
-        return impl(shapes, expr)
-
-
-# {(op, child_op): f(shapes, expr, allow_partial)}
-pushthrough_impls = {}
-
-def pushthrough(shapes, expr, child_op, allow_partial=True):
-    impl = pushthrough_impls.get((expr.op, child_op), None)
-    if impl is None:
-        print("No vectorization support for", expr.op, child_op)
-        raise CannotVectorize()
-
-    return impl(shapes, expr, allow_partial)
-
-
-################################################################################
-# Vectorize implementations for operators
-################################################################################
-
-def operator_vectorize(shapes, expr):
-    args = tuple(_vectorize(shapes, arg) for arg in expr.args)
-    return Vexpr(expr.op, args, {})
-
-vectorize_impls.update({
-    operator_add_p: operator_vectorize,
-    operator_mul_p: operator_vectorize,
-    operator_truediv_p: operator_vectorize,
-    operator_pow_p: operator_vectorize,
-    operator_matmul_p: operator_vectorize,
-    operator_neg_p: operator_vectorize,
-    operator_getitem_p: operator_vectorize,
-})
-
-# TODO needed? rename to CannotPush?
-class CannotVectorize(Exception):
-    pass
-
 
 ################################################################################
 # User interface
@@ -327,18 +268,7 @@ class VexprCaller:
             call_fn = self.alternate_calls[0]
             return call_fn(self, 0, **kwargs)
 
-        return self.vexpr(**kwargs)
-
-
-def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
-    shapes = {}
-    def record_shape(sub_expr, result):
-        shape_impl = shape_impls[type(result)]
-        shapes[id(sub_expr)] = shape_impl(result)
-    result = call(vexpr_caller.vexpr, kwargs, record_shape)
-    vexpr_caller.vexpr = _vectorize(shapes, vexpr_caller.vexpr)
-    del vexpr_caller.alternate_calls[i_alternate]
-    return result
+        return eval(self.vexpr, kwargs)
 
 
 def make_vexpr(f):
@@ -349,16 +279,12 @@ def make_vexpr(f):
     return VexprCaller(expression, arg_names)
 
 
-def vectorize(f):
-    if isinstance(f, VexprCaller):
-        f = f.clone()
-    elif isinstance(f, Vexpr):
-        f = VexprCaller(f, [])
+def eval(expr, inputs, allow_partial=False):
+    if allow_partial:
+        return partial_evaluate_(expr, inputs)
     else:
-        f = make_vexpr(f)
+        return call(expr, inputs)
 
-    f.alternate_calls.append(call_and_vectorize)
-    return f
 
 
 def partial_evaluate(f, inputs):

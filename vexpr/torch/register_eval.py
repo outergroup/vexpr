@@ -1,5 +1,6 @@
 import torch
 
+import vexpr.vectorization as v
 from vexpr import core
 from . import primitives as p
 
@@ -9,11 +10,11 @@ def shape(t):
     else:
         return ()
 
-core.shape_impls.update({
+v.shape_impls.update({
     torch.Tensor: shape,
 })
 
-core.shape_impls.update({
+v.shape_impls.update({
     dtype: shape
     for dtype in [torch.float16, torch.float32, torch.float64, torch.int8,
                   torch.int16, torch.int32, torch.int64, torch.uint8,

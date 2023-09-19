@@ -1,12 +1,12 @@
 from functools import partial
 
 import vexpr as vp
-import vexpr.numpy as vnp
 import vexpr.core as core
+import vexpr.numpy as vnp
 import vexpr.numpy.primitives as p
+import vexpr.vectorization as v
 
-
-def stack_vectorize(shapes, expr):
+def stack_vectorize(expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
@@ -16,16 +16,16 @@ def stack_vectorize(shapes, expr):
         for allow_partial in (False, True):
             for op in vexpr_ops:
                 try:
-                    return core.pushthrough(shapes, expr, op,
+                    return v.pushthrough(expr, op,
                                             allow_partial=allow_partial)
-                except core.CannotVectorize:
+                except v.CannotVectorize:
                     pass
 
     return expr
 
 
 # TODO: obviously, understand which of these impls should be the same.
-def concatenate_vectorize(shapes, expr):
+def concatenate_vectorize(expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op
                                    for v in expr.args[0]
@@ -55,44 +55,44 @@ def concatenate_vectorize(shapes, expr):
             for child_expr in expr.args[0]:
                 if child_expr.op == p.stack_p:
                     try:
-                        child_expr2 = core._vectorize(shapes, child_expr)
+                        child_expr2 = v._vectorize(child_expr)
                         # TODO find a faster way of doing this. probably make
                         # _vectorize indicate whether anything changed, perhaps
                         # always throwing CannotVectorize if no change occurs.
                         if child_expr != child_expr2:
                             child_expr = child_expr2
                             changed = True
-                    except core.CannotVectorize:
+                    except v.CannotVectorize:
                         pass
                 child_exprs.append(child_expr)
             if changed:
                 expr = vnp.concatenate(child_exprs, **expr.kwargs)
-                return concatenate_vectorize(shapes, expr)
+                return concatenate_vectorize(expr)
 
         for allow_partial in (False, True):
             for op in vexpr_ops:
                 try:
-                    return core.pushthrough(shapes, expr, op,
-                                            allow_partial=allow_partial)
-                except core.CannotVectorize:
+                    return v.pushthrough(expr, op,
+                                         allow_partial=allow_partial)
+                except v.CannotVectorize:
                     pass
 
 
     return expr
 
-def reduction_vectorize(op, shapes, expr):
+def reduction_vectorize(op, expr):
     assert expr.op == op
     # TODO handle axis?
     child_expr = expr.args[0]
     if not isinstance(child_expr, core.Vexpr):
         child_expr = vnp.stack(expr.args[0])
-    child_expr = core._vectorize(shapes, child_expr)
+    child_expr = v._vectorize(child_expr)
     kwargs = {}
     if "axis" in expr.kwargs:
         kwargs["axis"] = expr.kwargs["axis"]
     return core.Vexpr(op, (child_expr,), kwargs)
 
-core.vectorize_impls.update({
+v.vectorize_impls.update({
     p.stack_p: stack_vectorize,
     p.concatenate_p: concatenate_vectorize,
     p.sum_p: partial(reduction_vectorize, p.sum_p),

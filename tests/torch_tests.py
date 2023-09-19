@@ -38,10 +38,10 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(x1, x2):
-            return vtorch.index_add(vtorch.zeros((2, 3, 3)),
-                                    0,
-                                    torch.tensor([0, 0, 1, 1]),
-                                    vtorch.stack([x1, x2, x1, x2]))
+            return vctorch.index_add_into_zeros(2, 0,
+                                                torch.tensor([0, 0, 1, 1]),
+                                                vtorch.stack([x1, x2,
+                                                              x1, x2]))
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -58,11 +58,11 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(x1, x2):
-            return vtorch.index_reduce(vtorch.ones((2, 3, 3)),
-                                       0,
-                                       torch.tensor([0, 0, 1, 1]),
-                                       vtorch.stack([x1, x2, x1, x2]),
-                                       "prod")
+            return vctorch.index_reduce_into_ones(2, 0,
+                                                  torch.tensor([0, 0, 1, 1]),
+                                                  vtorch.stack([x1, x2,
+                                                                x1, x2]),
+                                                  "prod")
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -90,10 +90,9 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(a, b, c, d):
-            return vtorch.index_add(vtorch.zeros((2,)),
-                                    0,
-                                    torch.tensor([0, 0, 1, 1]),
-                                    vtorch.stack([a, b, c, d]))
+            return vctorch.index_add_into_zeros(2, 0,
+                                                torch.tensor([0, 0, 1, 1]),
+                                                vtorch.stack([a, b, c, d]))
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -111,10 +110,9 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(a, b, c, d):
-            return vtorch.index_add(vtorch.zeros((5,)),
-                                    0,
-                                    torch.tensor([0, 1, 0, 1, 2, 3, 4, 2, 3, 4]),
-                                    vtorch.concat([a, b, c, d]))
+            return vctorch.index_add_into_zeros(5, 0,
+                                                torch.tensor([0, 1, 0, 1, 2, 3, 4, 2, 3, 4]),
+                                                vtorch.concat([a, b, c, d]))
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -129,10 +127,9 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(x):
-            return vtorch.index_add(vtorch.zeros((2,)),
-                                    0,
-                                    torch.tensor([0, 0, 0, 1, 1, 1]),
-                                    x[..., [0, 1, 2, 2, 3, 4]])
+            return vctorch.index_add_into_zeros(2, 0,
+                                                torch.tensor([0, 0, 0, 1, 1, 1]),
+                                                x[..., [0, 1, 2, 2, 3, 4]])
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -215,9 +212,8 @@ class TestVexprTorchTests(unittest.TestCase):
             indices = torch.tensor(indices1 + indices2 + indices3 + joint)
             return scale * vtorch.sum(
                 beta_w
-                * vtorch.index_add(
-                    vtorch.zeros((3, 3, 2)),
-                    -1,
+                * vctorch.index_add_into_zeros(
+                    2, -1,
                     torch.tensor([0, 0, 0, 1]),
                     vtorch.concat([dirichlet_w, torch.ones(1)], dim=-1)
                     * vctorch.cdist_multi(
@@ -283,20 +279,19 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(x1, x2):
-            return vtorch.index_add(vtorch.zeros((2, 3, 3)),
-                                    0,
-                                    torch.tensor([0, 0, 1, 1]),
-                                    vtorch.stack([x1, x2, x1, x2]))
+            return vctorch.index_add_into_zeros(2, 0,
+                                                torch.tensor([0, 0, 1, 1]),
+                                                vtorch.stack([x1, x2, x1, x2]))
 
 
-        import vexpr.core as core
+        import vexpr.vectorization as v
         import vexpr.torch.primitives as torch_p
-        orig = core.vectorize_impls[torch_p.stack_p]
+        orig = v.vectorize_impls[torch_p.stack_p]
         trace = [False]
-        def traced_vectorize(shapes, expr):
+        def traced_vectorize(expr):
             trace[0] = True
-            return orig(shapes, expr)
-        core.vectorize_impls[torch_p.stack_p] = traced_vectorize
+            return orig(expr)
+        v.vectorize_impls[torch_p.stack_p] = traced_vectorize
 
         # first call should vectorize
         f(**example_inputs)
@@ -304,13 +299,13 @@ class TestVexprTorchTests(unittest.TestCase):
         self._assert_vexprs_equal(f.vexpr, expected.vexpr)
 
         # subsequent calls should not
-        assert torch_p.index_add_p not in core.vectorize_impls  # update test if this changes
+        assert torch_p.index_add_p not in v.vectorize_impls  # update test if this changes
         trace = [False]
-        def traced_index_add_vectorize(shapes, expr):
+        def traced_index_add_vectorize(expr):
             trace[0] = True
             return expr
 
-        core.vectorize_impls[torch_p.index_add_p] = traced_index_add_vectorize
+        v.vectorize_impls[torch_p.index_add_p] = traced_index_add_vectorize
         f(**example_inputs)
         self.assertFalse(trace[0])
 

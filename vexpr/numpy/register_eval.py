@@ -1,13 +1,14 @@
 import numpy as np
 
 from vexpr import core
+import vexpr.vectorization
 from . import primitives as p
 
-core.shape_impls.update({
+vexpr.vectorization.shape_impls.update({
     np.ndarray: np.shape,
 })
 
-core.shape_impls.update({
+vexpr.vectorization.shape_impls.update({
     dtype: np.shape
     for _, dtypes in np.sctypes.items()
     for dtype in dtypes

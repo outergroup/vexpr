@@ -3,15 +3,15 @@ from functools import partial
 import torch
 
 import vexpr as vp
-import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as csp_p
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
+import vexpr.vectorization as v
 from vexpr.torch.utils import torch_concat_shape, torch_stack_shape
 
 
-def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
+def push_concat_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == p.concat_p
     assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
@@ -37,8 +37,8 @@ def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
         raise ValueError("Expected same axes", axes)
     axis = axes[0]
 
-    left = core._vectorize(shapes, vtorch.concat(left, dim=-1))
-    right = core._vectorize(shapes, vtorch.concat(right, dim=-1))
+    left = v._vectorize(vtorch.concat(left, dim=-1))
+    right = v._vectorize(vtorch.concat(right, dim=-1))
 
     kwargs = dict(
         lengths=torch.concat(lengths),
@@ -47,20 +47,19 @@ def push_concat_through_cdist_multi(shapes, expr, allow_partial=True):
     if axis is not None:
         kwargs["dim"] = axis
 
-    ret = vctorch.cdist_multi(left, right, **kwargs)
-    shapes[id(ret)] = torch_concat_shape([shapes[id(child_expr)]
-                                          for child_expr in expr.args[0]],
-                                         dim=concat_axis)
+    return v.with_return_shape(
+        vctorch.cdist_multi(left, right, **kwargs),
+        torch_concat_shape([v.shape(child_expr)
+                            for child_expr in expr.args[0]],
+                           dim=concat_axis))
 
-    return ret
-
-core.pushthrough_impls[(p.concat_p, csp_p.cdist_multi_p)] = push_concat_through_cdist_multi
+v.pushthrough_impls[(p.concat_p, csp_p.cdist_multi_p)] = push_concat_through_cdist_multi
 
 
 
 def push_concat_through_index_reduction_into(
         index_reduction_into_p, parallel_reduction,
-        shapes, expr, allow_partial=True):
+        expr, allow_partial=True):
     assert expr.op == p.concat_p
 
     concat_dim = expr.kwargs.get("dim", 0)
@@ -76,7 +75,7 @@ def push_concat_through_index_reduction_into(
     grandchildren = []
     base = 0
     for child_expr in expr.args[0]:
-        child_shape = shapes[id(child_expr)]
+        child_shape = v.shape(child_expr)
         num_results = child_shape[concat_dim]
         if isinstance(child_expr, vp.Vexpr) \
            and child_expr.op == index_reduction_into_p:
@@ -89,14 +88,14 @@ def push_concat_through_index_reduction_into(
             base += num_results
 
     indices = torch.cat(indices)
-    grandchildren = core._vectorize(shapes, vtorch.concat(grandchildren, dim=concat_dim))
-
+    grandchildren = v._vectorize(vtorch.concat(grandchildren, dim=concat_dim))
     num_sums = base
-    ret = parallel_reduction(num_sums, index_reduction_dim, indices, grandchildren)
-    shapes[id(ret)] = torch_concat_shape([shapes[id(child_expr)]
-                                                for child_expr in expr.args[0]],
-                                         dim=concat_dim)
-    return ret
+    return v.with_return_shape(parallel_reduction(num_sums, index_reduction_dim,
+                                                  indices, grandchildren),
+                               torch_concat_shape([v.shape(child_expr)
+                                                   for child_expr in
+                                                   expr.args[0]],
+                                                  dim=concat_dim))
 
 def parallel_sum(num_sums, dim, index, source):
     return vctorch.index_add_into_zeros(num_sums, dim, index, source)
@@ -105,7 +104,7 @@ def parallel_prod(num_reductions, dim, index, source):
     return vctorch.index_reduce_into_ones(num_reductions, dim, index, source,
                                           "prod")
 
-core.pushthrough_impls.update({
+v.pushthrough_impls.update({
     (p.concat_p, csp_p.index_add_into_zeros_p): partial(push_concat_through_index_reduction_into,
                                          csp_p.index_add_into_zeros_p,
                                          parallel_sum),

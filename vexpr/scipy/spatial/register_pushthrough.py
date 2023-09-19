@@ -3,12 +3,13 @@ import numpy as np
 import vexpr.numpy as vnp
 import vexpr.numpy.primitives as np_p
 import vexpr.custom.scipy.primitives as csp_p
+import vexpr.vectorization as v
 from vexpr import core
 from vexpr.custom.scipy import cdist_multi
 
 from . import primitives as p
 
-def push_stack_through_cdist(shapes, expr, allow_partial=True):
+def push_stack_through_cdist(expr, allow_partial=True):
     assert expr.op == np_p.stack_p
     assert all(child_expr.op == p.cdist_p for child_expr in expr.args[0])
 
@@ -23,13 +24,13 @@ def push_stack_through_cdist(shapes, expr, allow_partial=True):
         left.append(child_expr.args[0])
         right.append(child_expr.args[1])
 
-        shape = shapes[id(child_expr.args[0])]
+        shape = v.shape(child_expr.args[0])
         length = shape[-1]
         lengths.append(length)
         child_matrix_shapes.append(shape[:-1])
 
-    left = core._vectorize(shapes, vnp.concatenate(left, axis=-1))
-    right = core._vectorize(shapes, vnp.concatenate(right, axis=-1))
+    left = v._vectorize(vnp.concatenate(left, axis=-1))
+    right = v._vectorize(vnp.concatenate(right, axis=-1))
 
     kwargs = dict(
         lengths=np.array(lengths)
@@ -49,14 +50,14 @@ def push_stack_through_cdist(shapes, expr, allow_partial=True):
     if axis < 0:
         axis += len(result_shape) + 1
     result_shape = result_shape[:axis] + (len(lengths),) + result_shape[axis:]
-    shapes[id(ret)] = result_shape
 
-    return ret
+    return v.with_return_shape(ret,
+                               result_shape)
 
-core.pushthrough_impls[(np_p.stack_p, p.cdist_p)] = push_stack_through_cdist
+v.pushthrough_impls[(np_p.stack_p, p.cdist_p)] = push_stack_through_cdist
 
 
-def push_concatenate_through_cdist_multi(shapes, expr, allow_partial=True):
+def push_concatenate_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == np_p.concatenate_p
     assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
@@ -80,8 +81,8 @@ def push_concatenate_through_cdist_multi(shapes, expr, allow_partial=True):
         raise ValueError("Expected same axes", axes)
     axis = axes[0]
 
-    left = core._vectorize(shapes, vnp.concatenate(left, axis=-1))
-    right = core._vectorize(shapes, vnp.concatenate(right, axis=-1))
+    left = v._vectorize(vnp.concatenate(left, axis=-1))
+    right = v._vectorize(vnp.concatenate(right, axis=-1))
 
     kwargs = dict(
         lengths=np.concatenate(lengths)
@@ -91,4 +92,4 @@ def push_concatenate_through_cdist_multi(shapes, expr, allow_partial=True):
 
     return cdist_multi(left, right, **kwargs)
 
-core.pushthrough_impls[(np_p.concatenate_p, csp_p.cdist_multi_p)] = push_concatenate_through_cdist_multi
+v.pushthrough_impls[(np_p.concatenate_p, csp_p.cdist_multi_p)] = push_concatenate_through_cdist_multi
