@@ -121,6 +121,9 @@ def pushthrough(expr, child_op, allow_partial=True):
 # Vectorize implementations for operators
 ################################################################################
 
+def unary_elementwise_vectorize(expr):
+    return Vexpr(expr.op, (_vectorize(expr.args[0]),), expr.kwargs)
+
 def operator_vectorize(expr):
     args = tuple(_vectorize(arg) for arg in expr.args)
     return Vexpr(expr.op, args, {})
@@ -131,7 +134,7 @@ vectorize_impls.update({
     core.operator_truediv_p: operator_vectorize,
     core.operator_pow_p: operator_vectorize,
     core.operator_matmul_p: operator_vectorize,
-    core.operator_neg_p: operator_vectorize,
+    core.operator_neg_p: unary_elementwise_vectorize,
     core.operator_getitem_p: operator_vectorize,
 })
 

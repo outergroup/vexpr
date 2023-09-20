@@ -351,6 +351,77 @@ def parallel_sum2(target, dim, index, source):
 def parallel_prod2(target, dim, index, source):
     return vtorch.index_reduce(target, dim, index, source, "prod")
 
+def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
+    assert expr.op == p.stack_p
+
+    exprs_to_stack = expr.args[0]
+    assert all(isinstance(child_expr, vp.Vexpr)
+               and child_expr.op == op
+               for child_expr in exprs_to_stack)
+
+    grandchildren = [child_expr.args[0]
+                     for child_expr in exprs_to_stack]
+    grandchildren = v._vectorize(vtorch.stack(grandchildren, **expr.kwargs))
+
+    assert all(expr.kwargs == exprs_to_stack[0].kwargs
+               for expr in exprs_to_stack[1:])
+    ret = vp.Vexpr(op, (grandchildren,), exprs_to_stack[0].kwargs)
+
+    grandchildren_shapes = [v.shape(child_expr.args[0])
+                            for child_expr in exprs_to_stack]
+    assert all(grandchildren_shape == grandchildren_shapes[0]
+                for grandchildren_shape in grandchildren_shapes)
+    dim = expr.kwargs.get("dim", 0)
+    # use dim to determine result shape after stack
+    result_shape = grandchildren_shapes[0]
+    if dim < 0:
+        dim += len(result_shape) + 1
+    result_shape = (result_shape[:dim]
+                    + (len(exprs_to_stack),)
+                    + result_shape[dim:])
+
+    return v.with_return_shape(ret,
+                               result_shape)
+
+def push_concat_through_unary_elementwise(op, expr, allow_partial=True):
+    assert expr.op == p.concat_p
+
+    exprs_to_concat = expr.args[0]
+    assert all(isinstance(child_expr, vp.Vexpr)
+               and child_expr.op == op
+               for child_expr in exprs_to_concat)
+
+    grandchildren = [child_expr.args[0]
+                     for child_expr in exprs_to_concat]
+
+    grandchildren = v._vectorize(vtorch.concat(grandchildren, **expr.kwargs))
+
+    assert all(expr.kwargs == exprs_to_concat[0].kwargs
+               for expr in exprs_to_concat[1:])
+    ret = vp.Vexpr(op, (grandchildren,), exprs_to_concat[0].kwargs)
+
+    grandchildren_shapes = [v.shape(child_expr.args[0])
+                            for child_expr in exprs_to_concat]
+    dim = expr.kwargs.get("dim", 0)
+    if dim < 0:
+        dim += len(grandchildren_shapes[0])
+
+    # use dim to determine result shape after concat
+    result_shape = []
+    for i in range(len(grandchildren_shapes[0])):
+        if i == dim:
+            result_shape.append(sum(grandchildren_shape[i]
+                                    for grandchildren_shape in grandchildren_shapes))
+        else:
+            assert all(grandchildren_shape[i] == grandchildren_shapes[0][i]
+                       for grandchildren_shape in grandchildren_shapes)
+            result_shape.append(grandchildren_shapes[0][i])
+
+    return v.with_return_shape(ret,
+                               tuple(result_shape))
+
+
+
 
 def push_concat_through_truediv(expr, allow_partial=True):
     assert expr.op == p.concat_p
@@ -499,6 +570,10 @@ v.pushthrough_impls.update({
     (p.concat_p, core.operator_truediv_p): push_concat_through_truediv,
     (p.stack_p, core.operator_mul_p): push_stack_through_mul,
     (p.concat_p, core.operator_mul_p): push_concat_through_mul,
+    (p.stack_p, core.operator_neg_p): partial(
+        push_stack_through_unary_elementwise, core.operator_neg_p),
+    (p.concat_p, core.operator_neg_p): partial(
+        push_concat_through_unary_elementwise, core.operator_neg_p),
 })
 
 

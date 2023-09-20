@@ -154,13 +154,6 @@ constant = lambda value: Vexpr(constant_p, (value,), {})
 import operator
 
 
-if hasattr(operator, "call"):
-    # This exists in Python 3.11+
-    operator_call_impl = operator.call
-else:
-    def operator_call_impl(f, *args, **kwargs):
-        return f(*args, **kwargs)
-
 eval_impls.update({
     operator_add_p: operator.add,
     operator_mul_p: operator.mul,
@@ -169,7 +162,9 @@ eval_impls.update({
     operator_matmul_p: operator.matmul,
     operator_neg_p: operator.neg,
     operator_getitem_p: operator.getitem,
-    operator_call_p: operator_call_impl,
+    operator_call_p: (operator.call  # This exists in Python 3.11+
+                      if hasattr(operator, "call")
+                      else lambda f, *args, **kwargs: f(*args, **kwargs)),
 })
 
 
