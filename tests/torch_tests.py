@@ -391,7 +391,7 @@ class TestVexprTorchTests(unittest.TestCase):
 
         return matern
 
-    def test_branching(self):
+    def test_branching_stack(self):
         matern = self._enable_matern()
 
         example_inputs = dict(
@@ -432,6 +432,36 @@ class TestVexprTorchTests(unittest.TestCase):
                             ps=torch.tensor([1, 1])))
                 ]),
                 torch.tensor([0, 1, 2, 3])
+            )
+
+        self._vectorize_test(example_inputs, f, expected)
+
+    def test_branching_concat(self):
+        matern = self._enable_matern()
+
+        example_inputs = dict(
+            a=1.2,
+            b=1.3,
+            c=1.4,
+        )
+
+        @vp.vectorize
+        def f(a, b, c):
+            return vtorch.concat([
+                matern(vtorch.stack([a, b, c])),
+                matern(vtorch.stack([a, b, c])),
+                vtorch.exp(-vtorch.stack([a, b, c])),
+                vtorch.exp(-vtorch.stack([a, b, c])),
+            ])
+
+        @vp.make_vexpr
+        def expected(a, b, c):
+            return vctorch.shuffle(
+                vtorch.concat([
+                    matern(vtorch.stack([a, b, c, a, b, c])),
+                    vtorch.exp(-vtorch.stack([a, b, c, a, b, c]))
+                ]),
+                torch.arange(12)
             )
 
         self._vectorize_test(example_inputs, f, expected)

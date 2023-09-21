@@ -214,7 +214,15 @@ def push_concat_through_stack(expr, allow_partial=True):
     for child_expr in expr.args[0]:
         all_stacked_vexprs.extend(child_expr.args[0])
 
-    expr = vtorch.stack(all_stacked_vexprs)
+    assert all(child_expr.kwargs == expr.args[0][0].kwargs
+               for child_expr in expr.args[0][1:])
+    stack_kwargs = expr.args[0][0].kwargs
+
+    expr = v.with_return_shape(
+        vtorch.stack(all_stacked_vexprs),
+        torch_stack_shape2([v.shape(d) for d in all_stacked_vexprs],
+                           **stack_kwargs)
+    )
     expr = v._vectorize(expr)
     return expr
 
@@ -421,39 +429,62 @@ def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
 def push_concat_through_unary_elementwise(op, expr, allow_partial=True):
     assert expr.op == p.concat_p
 
-    exprs_to_concat = expr.args[0]
-    assert all(isinstance(child_expr, vp.Vexpr)
-               and child_expr.op == op
-               for child_expr in exprs_to_concat)
-
-    grandchildren = [child_expr.args[0]
-                     for child_expr in exprs_to_concat]
-
-    grandchildren = v._vectorize(vtorch.concat(grandchildren, **expr.kwargs))
-
-    assert all(expr.kwargs == exprs_to_concat[0].kwargs
-               for expr in exprs_to_concat[1:])
-    ret = vp.Vexpr(op, (grandchildren,), exprs_to_concat[0].kwargs)
-
-    grandchildren_shapes = [v.shape(child_expr.args[0])
-                            for child_expr in exprs_to_concat]
+    applicable = []
+    applicable_indices = []
+    remainder = []
+    remainder_indices = []
+    base = 0
     dim = expr.kwargs.get("dim", 0)
-    if dim < 0:
-        dim += len(grandchildren_shapes[0])
-
-    # use dim to determine result shape after concat
-    result_shape = []
-    for i in range(len(grandchildren_shapes[0])):
-        if i == dim:
-            result_shape.append(sum(grandchildren_shape[i]
-                                    for grandchildren_shape in grandchildren_shapes))
+    for child_expr in expr.args[0]:
+        num_indices = v.shape(child_expr)[dim]
+        result_indices = list(range(base, base + num_indices))
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == op:
+            applicable.append(child_expr)
+            applicable_indices += result_indices
         else:
-            assert all(grandchildren_shape[i] == grandchildren_shapes[0][i]
-                       for grandchildren_shape in grandchildren_shapes)
-            result_shape.append(grandchildren_shapes[0][i])
+            remainder.append(child_expr)
+            remainder_indices += result_indices
+        base += num_indices
 
-    return v.with_return_shape(ret,
-                               tuple(result_shape))
+    grandchildren = [child_expr.args[0] for child_expr in applicable]
+    grandchildren = v._vectorize(
+        v.with_return_shape(vtorch.concat(grandchildren, **expr.kwargs),
+                            torch_concat_shape([v.shape(gc)
+                                                for gc in grandchildren],
+                                               **expr.kwargs)))
+
+    applicable = v.with_return_shape(
+        vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
+        v.shape(grandchildren)
+    )
+
+    if len(remainder) == 0:
+        return applicable
+
+    remainder = v._vectorize(
+        v.with_return_shape(
+            vtorch.concat(remainder, **expr.kwargs),
+            torch_concat_shape([v.shape(r_expr)
+                                for r_expr in remainder],
+                               **expr.kwargs)
+        )
+    )
+
+    result_shape = torch_concat_shape([v.shape(applicable),
+                                       v.shape(remainder)],
+                                      **expr.kwargs)
+
+    indices = invert_shuffle(applicable_indices + remainder_indices)
+
+    return v.with_return_shape(
+        vctorch.shuffle(
+            v.with_return_shape(
+                vtorch.concat([applicable, remainder],
+                              **expr.kwargs),
+                result_shape),
+            indices,
+            **expr.kwargs),
+        result_shape)
 
 
 def push_concat_through_truediv(expr, allow_partial=True):

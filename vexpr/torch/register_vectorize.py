@@ -31,7 +31,7 @@ def stack_vectorize(expr):
             for op in vexpr_ops:
                 try:
                     return vexpr.vectorization.pushthrough(expr, op,
-                                            allow_partial=allow_partial)
+                                                           allow_partial=allow_partial)
                 except vexpr.vectorization.CannotVectorize:
                     pass
 
