@@ -136,9 +136,9 @@ class TestVexprTorchTests(unittest.TestCase):
     def test_kernel(self):
         example_inputs = dict(
             x1=torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0],
-                         [0.5, 0.5, 0.5, 0.5, 0.5]]),
+                             [0.5, 0.5, 0.5, 0.5, 0.5]]),
             x2=torch.tensor([[1.0, 0.9, 1.0, 0.9, 1.0],
-                         [0.5, 0.4, 0.5, 0.4, 0.5]]),
+                             [0.5, 0.4, 0.5, 0.4, 0.5]]),
             lengthscale=torch.tensor([0.7, 0.8, 0.9, 1.0, 1.1]),
             scale=torch.tensor(1.2),
         )
@@ -149,9 +149,9 @@ class TestVexprTorchTests(unittest.TestCase):
                 vtorch.sum([vtorch.cdist(
                     x1[..., indices] / lengthscale[indices],
                     x2[..., indices] / lengthscale[indices])
-                         for indices in ([0, 1, 2],
-                                         [2, 3, 4])],
-                        dim=0))
+                            for indices in ([0, 1, 2],
+                                            [2, 3, 4])],
+                           dim=0))
 
         @vp.make_vexpr
         def expected(x1, x2, scale, lengthscale):
@@ -162,7 +162,7 @@ class TestVexprTorchTests(unittest.TestCase):
                     x2[..., indices] / lengthscale[indices],
                     lengths=torch.tensor([3, 3]),
                     ps=torch.tensor([2, 2])),
-                        dim=0))
+                           dim=0))
 
         self._vectorize_test(example_inputs, kernel, expected)
 
@@ -359,6 +359,82 @@ class TestVexprTorchTests(unittest.TestCase):
         inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
         print(inference_f)
         self._assert_vexprs_equal(inference_f.vexpr, expected_pe.vexpr)
+
+    def _enable_matern(self):
+        import math
+        from functools import partial
+
+        import torch
+        import vexpr.core
+        import vexpr.torch.primitives as t_p
+        import vexpr.vectorization as v
+        from vexpr import Vexpr
+        from vexpr.torch.register_pushthrough import (
+            push_concat_through_unary_elementwise,
+            push_stack_through_unary_elementwise,
+        )
+
+        matern_p, matern = vexpr.core._p_and_constructor("matern")
+
+        def matern_impl(d, nu=2.5):
+            assert nu == 2.5
+            exp_component = torch.exp(-math.sqrt(5) * d)
+            constant_component = 1. + (math.sqrt(5) * d) + (5. / 3.) * d**2
+            return constant_component * exp_component
+
+        vexpr.core.eval_impls[matern_p] = matern_impl
+        v.vectorize_impls[matern_p] = v.unary_elementwise_vectorize
+        v.pushthrough_impls[(t_p.stack_p, matern_p)] = partial(
+            push_stack_through_unary_elementwise, matern_p)
+        v.pushthrough_impls[(t_p.concat_p, matern_p)] = partial(
+            push_concat_through_unary_elementwise, matern_p)
+
+        return matern
+
+    def test_branching(self):
+        matern = self._enable_matern()
+
+        example_inputs = dict(
+            x1=torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                             [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]]),
+            x2=torch.tensor([[1.0, 0.9, 1.0, 0.9, 1.0, 0.9, 1.0, 0.9],
+                             [0.5, 0.4, 0.5, 0.4, 0.5, 0.4, 0.5, 0.4]]),
+        )
+
+        @vp.vectorize
+        def f(x1, x2):
+            indices1 = [0, 1]
+            indices2 = [2, 3]
+            indices3 = [4, 5]
+            indices4 = [6, 7]
+            return vtorch.stack([
+                matern(vtorch.cdist(x1[..., indices1], x2[..., indices1], p=2)),
+                matern(vtorch.cdist(x1[..., indices2], x2[..., indices2], p=2)),
+                vtorch.exp(-vtorch.cdist(x1[..., indices3], x2[..., indices3], p=1)),
+                vtorch.exp(-vtorch.cdist(x1[..., indices4], x2[..., indices4], p=1)),
+            ])
+
+        @vp.make_vexpr
+        def expected(x1, x2):
+            indices12 = torch.tensor([0, 1, 2, 3])
+            indices34 = torch.tensor([4, 5, 6, 7])
+            return vctorch.shuffle(
+                vtorch.concat([
+                    matern(
+                        vctorch.cdist_multi(
+                            x1[..., indices12], x2[..., indices12],
+                            lengths=torch.tensor([2, 2]),
+                            ps=torch.tensor([2, 2]))),
+                    vtorch.exp(
+                        -vctorch.cdist_multi(
+                            x1[..., indices34], x2[..., indices34],
+                            lengths=torch.tensor([2, 2]),
+                            ps=torch.tensor([1, 1])))
+                ]),
+                torch.tensor([0, 1, 2, 3])
+            )
+
+        self._vectorize_test(example_inputs, f, expected)
 
     def _vectorize_test(self, example_inputs, f, expected_after):
         before_result = f(**example_inputs)

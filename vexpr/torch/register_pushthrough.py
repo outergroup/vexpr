@@ -10,7 +10,11 @@ import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.vectorization import _vectorize, with_metadata
-from vexpr.torch.utils import torch_concat_shape, torch_stack_shape
+from vexpr.torch.utils import (
+    torch_concat_shape,
+    torch_stack_shape,
+    torch_stack_shape2,
+)
 
 def canonical_axis(axis, ndim):
     if axis is None:
@@ -260,8 +264,8 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
                 num_operands = len(r_arg0)
                 # treat array_like as an implicit stack.
                 r_arg0 = v.with_return_shape(vtorch.stack(r_arg0),
-                                       dict(return_shape=torch_stack_shape(
-                                           v.shape(r_arg0[0]), num_operands)))
+                                             dict(return_shape=torch_stack_shape(
+                                                 v.shape(r_arg0[0]), num_operands)))
 
             if r_axis != stack_axis:
                 r_arg0 = vtorch.moveaxis(r_arg0, r_axis, stack_axis)
@@ -351,37 +355,68 @@ def parallel_sum2(target, dim, index, source):
 def parallel_prod2(target, dim, index, source):
     return vtorch.index_reduce(target, dim, index, source, "prod")
 
+
+def invert_shuffle(indices):
+    inverted_indices = torch.zeros_like(torch.as_tensor(indices))
+    inverted_indices[indices] = torch.arange(len(indices))
+    return inverted_indices
+
+
 def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
     assert expr.op == p.stack_p
 
-    exprs_to_stack = expr.args[0]
-    assert all(isinstance(child_expr, vp.Vexpr)
-               and child_expr.op == op
-               for child_expr in exprs_to_stack)
+    applicable = []
+    applicable_indices = []
+    remainder = []
+    remainder_indices = []
+    for i, child_expr in enumerate(expr.args[0]):
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == op:
+            applicable.append(child_expr)
+            applicable_indices.append(i)
+        else:
+            remainder.append(child_expr)
+            remainder_indices.append(i)
 
-    grandchildren = [child_expr.args[0]
-                     for child_expr in exprs_to_stack]
-    grandchildren = v._vectorize(vtorch.stack(grandchildren, **expr.kwargs))
+    grandchildren = [child_expr.args[0] for child_expr in applicable]
+    grandchildren = v._vectorize(
+        v.with_return_shape(vtorch.stack(grandchildren, **expr.kwargs),
+                            torch_stack_shape2([v.shape(gc)
+                                                for gc in grandchildren],
+                                               **expr.kwargs)))
 
-    assert all(expr.kwargs == exprs_to_stack[0].kwargs
-               for expr in exprs_to_stack[1:])
-    ret = vp.Vexpr(op, (grandchildren,), exprs_to_stack[0].kwargs)
+    applicable = v.with_return_shape(
+        vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
+        v.shape(grandchildren)
+    )
 
-    grandchildren_shapes = [v.shape(child_expr.args[0])
-                            for child_expr in exprs_to_stack]
-    assert all(grandchildren_shape == grandchildren_shapes[0]
-                for grandchildren_shape in grandchildren_shapes)
-    dim = expr.kwargs.get("dim", 0)
-    # use dim to determine result shape after stack
-    result_shape = grandchildren_shapes[0]
-    if dim < 0:
-        dim += len(result_shape) + 1
-    result_shape = (result_shape[:dim]
-                    + (len(exprs_to_stack),)
-                    + result_shape[dim:])
+    if len(remainder) == 0:
+        return applicable
 
-    return v.with_return_shape(ret,
-                               result_shape)
+    remainder = v._vectorize(
+        v.with_return_shape(
+            vtorch.stack(remainder, **expr.kwargs),
+            torch_stack_shape2([v.shape(r_expr)
+                                for r_expr in remainder],
+                               **expr.kwargs)
+        )
+    )
+
+    result_shape = torch_concat_shape([v.shape(applicable),
+                                       v.shape(remainder)],
+                                      **expr.kwargs)
+
+    indices = invert_shuffle(applicable_indices + remainder_indices)
+
+    return v.with_return_shape(
+        vctorch.shuffle(
+            v.with_return_shape(
+                vtorch.concat([applicable, remainder],
+                              **expr.kwargs),
+                result_shape),
+            indices,
+            **expr.kwargs),
+        result_shape)
+
 
 def push_concat_through_unary_elementwise(op, expr, allow_partial=True):
     assert expr.op == p.concat_p
@@ -419,8 +454,6 @@ def push_concat_through_unary_elementwise(op, expr, allow_partial=True):
 
     return v.with_return_shape(ret,
                                tuple(result_shape))
-
-
 
 
 def push_concat_through_truediv(expr, allow_partial=True):
@@ -567,6 +600,10 @@ v.pushthrough_impls.update({
     (p.concat_p, p.index_reduce_p): partial(push_concat_through_index_reduction,
                                             p.index_reduce_p,
                                             parallel_prod2),
+    (p.stack_p, p.exp_p): partial(
+        push_stack_through_unary_elementwise, p.exp_p),
+    (p.concat_p, p.exp_p): partial(
+        push_concat_through_unary_elementwise, p.exp_p),
     (p.concat_p, core.operator_truediv_p): push_concat_through_truediv,
     (p.stack_p, core.operator_mul_p): push_stack_through_mul,
     (p.concat_p, core.operator_mul_p): push_concat_through_mul,

@@ -3,9 +3,9 @@ import torch
 from vexpr import core
 from . import primitives as p
 
-def shuffle_impl(arr, indices, axis=0):
+def shuffle_impl(arr, indices, dim=0):
     selection = [slice(None)] * arr.ndim
-    selection[axis] = indices
+    selection[dim] = indices
     return arr[selection]
 
 core.eval_impls[p.shuffle_p] = shuffle_impl
