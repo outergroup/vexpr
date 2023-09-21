@@ -5,7 +5,7 @@ zeros_p, zeros = _p_and_constructor("torch.zeros")
 ones_p, ones = _p_and_constructor("torch.ones")
 # Array manipulation
 stack_p, stack = _p_and_constructor("torch.stack")
-concat_p, concat = _p_and_constructor("torch.concat")
+cat_p, cat = _p_and_constructor("torch.cat")
 moveaxis_p, moveaxis = _p_and_constructor("torch.moveaxis")
 reshape_p, reshape = _p_and_constructor("torch.reshape")
 # Unary operators
@@ -24,7 +24,7 @@ __all__ = [
     "zeros",
     "ones",
     "stack",
-    "concat",
+    "cat",
     "moveaxis",
     "reshape",
     "exp",

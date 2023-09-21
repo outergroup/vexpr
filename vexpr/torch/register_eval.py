@@ -45,7 +45,7 @@ core.eval_impls.update({
     p.zeros_p: torch.zeros,
     p.ones_p: torch.ones,
     p.stack_p: listlike_of_tensors(torch.stack),
-    p.concat_p: torch.concat,
+    p.cat_p: torch.cat,
     p.moveaxis_p: torch.moveaxis,
     p.reshape_p: torch.reshape,
     p.exp_p: torch.exp,

@@ -9,7 +9,7 @@ def torch_stack_shape2(shapes, dim=0):
     return torch_stack_shape(shapes[0], len(shapes), dim)
 
 
-def torch_concat_shape(child_shapes, dim=0):
+def torch_cat_shape(child_shapes, dim=0):
     if dim < 0:
         dim += len(child_shapes[0])
     return (child_shapes[0][:dim]

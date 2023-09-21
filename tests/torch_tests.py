@@ -97,7 +97,7 @@ class TestVexprTorchTests(unittest.TestCase):
         self._vectorize_test(example_inputs, f, expected)
 
     @unittest.skip("Not yet supported")
-    def test_sum_vectorize_concat_vectors(self):
+    def test_sum_vectorize_cat_vectors(self):
         example_inputs = dict(a=torch.tensor([1, 2]),
                               b=torch.tensor([2, 3]),
                               c=torch.tensor([2, 3, 4]),
@@ -105,14 +105,14 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.vectorize
         def f(a, b, c, d):
-            return vtorch.concat([vtorch.sum([a, b], dim=0),
+            return vtorch.cat([vtorch.sum([a, b], dim=0),
                                     vtorch.sum([c, d], dim=0)])
 
         @vp.make_vexpr
         def expected(a, b, c, d):
             return vctorch.index_add_into_zeros(5, 0,
                                                 torch.tensor([0, 1, 0, 1, 2, 3, 4, 2, 3, 4]),
-                                                vtorch.concat([a, b, c, d]))
+                                                vtorch.cat([a, b, c, d]))
 
         self._vectorize_test(example_inputs, f, expected)
 
@@ -215,7 +215,7 @@ class TestVexprTorchTests(unittest.TestCase):
                 * vctorch.index_add_into_zeros(
                     2, -1,
                     torch.tensor([0, 0, 0, 1]),
-                    vtorch.concat([dirichlet_w, torch.ones(1)], dim=-1)
+                    vtorch.cat([dirichlet_w, torch.ones(1)], dim=-1)
                     * vctorch.cdist_multi(
                         x1[..., indices] / lengthscale[indices],
                         x2[..., indices] / lengthscale[indices],
@@ -238,7 +238,7 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.vectorize
         def f(w, x):
-            return vtorch.concat([w[[0, 1]] * x[..., [0, 1]],
+            return vtorch.cat([w[[0, 1]] * x[..., [0, 1]],
                                     w[[1, 2]] * x[..., [1, 2]],
                                     x[..., [2]],
                                     x[..., [3, 2]],
@@ -251,17 +251,17 @@ class TestVexprTorchTests(unittest.TestCase):
             # TODO note here that there is potential for a shuffle lift. if we
             # lift this shuffle, we can push it onto the x indices. if the final
             # result gets reduced, then all is equal.
-            return (vctorch.shuffle(vtorch.concat([w[[0, 1, 1, 2, 3, 2, 0, 3]],
-                                                  torch.ones(5)]),
+            return (vctorch.shuffle(vtorch.cat([w[[0, 1, 1, 2, 3, 2, 0, 3]],
+                                                torch.ones(5)]),
                                  torch.tensor([0, 1, 2, 3, 7, 4, 5, 6, 8, 9])),
                     * x[..., [0, 1, 1, 2, 2, 3, 2, 3, 0, 3]])
 
         @vp.make_vexpr
         def expected_alt(w, x):
-            return (vtorch.concat([w[[0, 1, 1, 2]],
-                                     torch.ones(3),
-                                     w[[3]],
-                                     torch.ones(2)]),
+            return (vtorch.cat([w[[0, 1, 1, 2]],
+                                torch.ones(3),
+                                w[[3]],
+                                torch.ones(2)]),
                     * x[..., [0, 1, 1, 2, 2, 3, 2, 3, 0, 3]])
 
         self._vectorize_test(inputs, f, expected)
@@ -370,7 +370,7 @@ class TestVexprTorchTests(unittest.TestCase):
         import vexpr.vectorization as v
         from vexpr import Vexpr
         from vexpr.torch.register_pushthrough import (
-            push_concat_through_unary_elementwise,
+            push_cat_through_unary_elementwise,
             push_stack_through_unary_elementwise,
         )
 
@@ -386,8 +386,8 @@ class TestVexprTorchTests(unittest.TestCase):
         v.vectorize_impls[matern_p] = v.unary_elementwise_vectorize
         v.pushthrough_impls[(t_p.stack_p, matern_p)] = partial(
             push_stack_through_unary_elementwise, matern_p)
-        v.pushthrough_impls[(t_p.concat_p, matern_p)] = partial(
-            push_concat_through_unary_elementwise, matern_p)
+        v.pushthrough_impls[(t_p.cat_p, matern_p)] = partial(
+            push_cat_through_unary_elementwise, matern_p)
 
         return matern
 
@@ -419,7 +419,7 @@ class TestVexprTorchTests(unittest.TestCase):
             indices12 = torch.tensor([0, 1, 2, 3])
             indices34 = torch.tensor([4, 5, 6, 7])
             return vctorch.shuffle(
-                vtorch.concat([
+                vtorch.cat([
                     matern(
                         vctorch.cdist_multi(
                             x1[..., indices12], x2[..., indices12],
@@ -436,7 +436,7 @@ class TestVexprTorchTests(unittest.TestCase):
 
         self._vectorize_test(example_inputs, f, expected)
 
-    def test_branching_concat(self):
+    def test_branching_cat(self):
         matern = self._enable_matern()
 
         example_inputs = dict(
@@ -447,7 +447,7 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.vectorize
         def f(a, b, c):
-            return vtorch.concat([
+            return vtorch.cat([
                 matern(vtorch.stack([a, b, c])),
                 matern(vtorch.stack([a, b, c])),
                 vtorch.exp(-vtorch.stack([a, b, c])),
@@ -457,7 +457,7 @@ class TestVexprTorchTests(unittest.TestCase):
         @vp.make_vexpr
         def expected(a, b, c):
             return vctorch.shuffle(
-                vtorch.concat([
+                vtorch.cat([
                     matern(vtorch.stack([a, b, c, a, b, c])),
                     vtorch.exp(-vtorch.stack([a, b, c, a, b, c]))
                 ]),

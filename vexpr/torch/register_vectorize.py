@@ -39,7 +39,7 @@ def stack_vectorize(expr):
 
 
 # TODO: obviously, understand which of these impls should be the same.
-def concat_vectorize(expr):
+def cat_vectorize(expr):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op
                                    for v in expr.args[0]
@@ -49,7 +49,7 @@ def concat_vectorize(expr):
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
-    # TODO: in general, every user-provided stack (and maybe concat, and
+    # TODO: in general, every user-provided stack (and maybe cat, and
     # other things?) should be pushed through before trying other stuff. they
     # just cause confusion. One solution is to do a first pass that is bottom
     # up, performing a vectorize on each stack, starting from the leaf nodes.
@@ -58,10 +58,10 @@ def concat_vectorize(expr):
     # logic.
 
 
-    # TODO if any child ops are a concat with the same dim, absorb their
+    # TODO if any child ops are a cat with the same dim, absorb their
     # children
 
-    # TODO: for any adjacent numpy arrays, perform a concat immediately?
+    # TODO: for any adjacent numpy arrays, perform a cat immediately?
 
     if len(vexpr_ops) > 0:
         # first pass, detect any stacks and vectorize them, attempting to make them disappear.
@@ -82,8 +82,7 @@ def concat_vectorize(expr):
                         pass
                 child_exprs.append(child_expr)
             if changed:
-                expr = vtorch.concat(child_exprs, **expr.kwargs)
-                return concat_vectorize(expr)
+                return cat_vectorize(vtorch.cat(child_exprs, **expr.kwargs))
 
         for allow_partial in (False, True):
             for op in vexpr_ops:
@@ -109,7 +108,7 @@ def reduction_vectorize(op, expr):
 
 vexpr.vectorization.vectorize_impls.update({
     p.stack_p: stack_vectorize,
-    p.concat_p: concat_vectorize,
+    p.cat_p: cat_vectorize,
     p.sum_p: partial(reduction_vectorize, p.sum_p),
     p.prod_p: partial(reduction_vectorize, p.prod_p),
 })
