@@ -128,7 +128,10 @@ def operator_vectorize(expr):
     args = tuple(_vectorize(arg) for arg in expr.args)
     return Vexpr(expr.op, args, {})
 
+def identity(expr): return expr
+
 vectorize_impls.update({
+    core.symbol_p: identity,
     core.operator_add_p: operator_vectorize,
     core.operator_mul_p: operator_vectorize,
     core.operator_truediv_p: operator_vectorize,
