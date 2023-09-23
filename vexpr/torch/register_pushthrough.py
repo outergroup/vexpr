@@ -14,7 +14,10 @@ from vexpr.torch.utils import (
     torch_cat_shape,
     torch_stack_shape,
     torch_stack_shape2,
+    stack_remainder_then_combine,
+    cat_remainder_then_combine,
 )
+
 
 def canonical_axis(axis, ndim):
     if axis is None:
@@ -245,8 +248,12 @@ def push_cat_through_cat(expr, allow_partial=True):
             all_cat_vexprs.append(child_expr)
 
     expr = vtorch.cat(all_cat_vexprs, dim=cat_dim)
-    expr = v._vectorize(expr)
-    return expr
+    return v.with_return_shape(
+        v._vectorize(expr),
+        torch_cat_shape([v.shape(child_expr) for child_expr in all_cat_vexprs],
+                        cat_dim)
+    )
+
 
 def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
                                  allow_partial=True):
@@ -363,24 +370,6 @@ def parallel_prod2(target, dim, index, source):
     return vtorch.index_reduce(target, dim, index, source, "prod")
 
 
-def invert_shuffle(indices):
-    inverted_indices = torch.zeros_like(torch.as_tensor(indices))
-    inverted_indices[indices] = torch.arange(len(indices))
-    return inverted_indices
-
-
-def maybe_shuffle(expr, mutated_indices, **kwargs):
-    if torch.equal(torch.as_tensor(mutated_indices),
-                   torch.arange(len(mutated_indices))):
-        # the shuffle would be a no-op
-        return expr
-    else:
-        indices = invert_shuffle(mutated_indices)
-        return v.with_return_shape(
-            vctorch.shuffle(expr, indices, **kwargs),
-            v.shape(expr))
-
-
 def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
     assert expr.op == p.stack_p
 
@@ -403,33 +392,15 @@ def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
                                                 for gc in grandchildren],
                                                **expr.kwargs)))
 
-    applicable = v.with_return_shape(
-        vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
-        v.shape(grandchildren)
-    )
-
-    if len(remainder) == 0:
-        return applicable
-
-    remainder = v._vectorize(
+    return stack_remainder_then_combine(
         v.with_return_shape(
-            vtorch.stack(remainder, **expr.kwargs),
-            torch_stack_shape2([v.shape(r_expr)
-                                for r_expr in remainder],
-                               **expr.kwargs)
-        )
-    )
-
-    result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
-                                   **expr.kwargs)
-
-    result = v.with_return_shape(
-        vtorch.cat([applicable, remainder], **expr.kwargs),
-        result_shape)
-
-    return maybe_shuffle(result,
-                         applicable_indices + remainder_indices,
-                         **expr.kwargs)
+            vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
+            v.shape(grandchildren)
+        ),
+        remainder,
+        applicable_indices,
+        remainder_indices,
+        **expr.kwargs)
 
 
 def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
@@ -459,32 +430,15 @@ def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
                                              for gc in grandchildren],
                                             **expr.kwargs)))
 
-    applicable = v.with_return_shape(
-        vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
-        v.shape(grandchildren)
-    )
-
-    if len(remainder) == 0:
-        return applicable
-
-    remainder = v._vectorize(
+    return cat_remainder_then_combine(
         v.with_return_shape(
-            vtorch.cat(remainder, **expr.kwargs),
-            torch_cat_shape([v.shape(r_expr)
-                             for r_expr in remainder],
-                            **expr.kwargs)
-        )
-    )
-
-    result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
-                                   **expr.kwargs)
-    result = v.with_return_shape(vtorch.cat([applicable, remainder],
-                                            **expr.kwargs),
-                                 result_shape)
-
-    return maybe_shuffle(result,
-                         applicable_indices + remainder_indices,
-                         **expr.kwargs)
+            vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
+            v.shape(grandchildren)
+        ),
+        remainder,
+        applicable_indices,
+        remainder_indices,
+        **expr.kwargs)
 
 
 def push_cat_through_truediv(expr, allow_partial=True):
@@ -647,7 +601,10 @@ v.pushthrough_impls.update({
 
 def push_stack_through_cdist(expr, allow_partial=True):
     assert expr.op == p.stack_p
-    assert all(child_expr.op == p.cdist_p for child_expr in expr.args[0])
+
+    metric = next(child_expr.kwargs.get("p", 2)
+                  for child_expr in expr.args[0]
+                  if child_expr.op == p.cdist_p)
 
     # TODO process this
     stack_axis = expr.kwargs.get("dim", 0)
@@ -655,21 +612,30 @@ def push_stack_through_cdist(expr, allow_partial=True):
     left = []
     right = []
     lengths = []
-    ps = []
     child_matrix_shapes = []
-    for child_expr in expr.args[0]:
-        left.append(child_expr.args[0])
-        right.append(child_expr.args[1])
-        ps.append(child_expr.kwargs.get("p", 2))
-        lengths.append(v.shape(child_expr.args[0])[-1])
-        child_matrix_shapes.append(v.shape(child_expr))
+
+    applicable_indices = []
+    remainder = []
+    remainder_indices = []
+
+    for i, child_expr in enumerate(expr.args[0]):
+        if (child_expr.op == p.cdist_p
+            and child_expr.kwargs.get("p", 2) == metric):
+            applicable_indices.append(i)
+            left.append(child_expr.args[0])
+            right.append(child_expr.args[1])
+            lengths.append(v.shape(child_expr.args[0])[-1])
+            child_matrix_shapes.append(v.shape(child_expr))
+        else:
+            remainder.append(child_expr)
+            remainder_indices.append(i)
 
     left = v._vectorize(vtorch.cat(left, dim=-1))
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
     kwargs = dict(
         lengths=tuple(lengths),
-        ps=tuple(ps),
+        p=metric,
     )
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
@@ -684,7 +650,17 @@ def push_stack_through_cdist(expr, allow_partial=True):
     if axis < 0:
         axis += len(result_shape) + 1
     result_shape = result_shape[:axis] + (len(lengths),) + result_shape[axis:]
-    return v.with_return_shape(vctorch.cdist_multi(left, right, **kwargs),
-                               result_shape)
+    applicable =  v.with_return_shape(
+        vctorch.cdist_multi(left, right, **kwargs),
+        result_shape)
+
+    return stack_remainder_then_combine(
+        v.with_return_shape(
+            vctorch.cdist_multi(left, right, **kwargs),
+            result_shape),
+        remainder,
+        applicable_indices,
+        remainder_indices,
+        **expr.kwargs)
 
 v.pushthrough_impls[(p.stack_p, p.cdist_p)] = push_stack_through_cdist

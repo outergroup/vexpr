@@ -8,27 +8,47 @@ import vexpr.custom.torch.primitives as csp_p
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
-from vexpr.torch.utils import torch_cat_shape, torch_stack_shape
+from vexpr.torch.utils import (
+    torch_cat_shape,
+    torch_stack_shape,
+    cat_remainder_then_combine,
+)
 
 
 def push_cat_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == p.cat_p
-    assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
-    # TODO process this
-    cat_axis = expr.kwargs.get("dim", 0)
+    metric = next(child_expr.kwargs.get("p", 2)
+                  for child_expr in expr.args[0]
+                  if child_expr.op == csp_p.cdist_multi_p)
+
+    cat_dim = expr.kwargs.get("dim", 0)
 
     left = []
     right = []
     lengths = []
     axes = []
-    ps = []
+
+    applicable_exprs = []
+    applicable_indices = []
+    remainder = []
+    remainder_indices = []
+    base = 0
     for child_expr in expr.args[0]:
-        left.append(child_expr.args[0])
-        right.append(child_expr.args[1])
-        lengths += child_expr.kwargs["lengths"]
-        ps += child_expr.kwargs["ps"]
-        axes.append(child_expr.kwargs.get("dim", None))
+        num_indices = v.shape(child_expr)[cat_dim]
+        result_indices = list(range(base, base + num_indices))
+        if (child_expr.op == csp_p.cdist_multi_p
+            and child_expr.kwargs.get("p", 2) == metric):
+            applicable_indices += result_indices
+            applicable_exprs.append(child_expr)
+            left.append(child_expr.args[0])
+            right.append(child_expr.args[1])
+            lengths += child_expr.kwargs["lengths"]
+            axes.append(child_expr.kwargs.get("dim", None))
+        else:
+            remainder_indices += result_indices
+            remainder.append(child_expr)
+        base += num_indices
 
     canonicalized_axes = [(axis if axis is not None else 0)
                           for axis in axes]
@@ -42,16 +62,22 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
 
     kwargs = dict(
         lengths=tuple(lengths),
-        ps=tuple(ps),
+        p=metric,
     )
     if axis is not None:
         kwargs["dim"] = axis
 
-    return v.with_return_shape(
-        vctorch.cdist_multi(left, right, **kwargs),
-        torch_cat_shape([v.shape(child_expr)
-                         for child_expr in expr.args[0]],
-                        dim=cat_axis))
+    return cat_remainder_then_combine(
+        v.with_return_shape(
+            vctorch.cdist_multi(left, right, **kwargs),
+            torch_cat_shape([v.shape(child_expr)
+                             for child_expr in applicable_exprs],
+                            dim=cat_dim)),
+        remainder,
+        applicable_indices,
+        remainder_indices,
+        **expr.kwargs)
+
 
 v.pushthrough_impls[(p.cat_p, csp_p.cdist_multi_p)] = push_cat_through_cdist_multi
 
@@ -113,3 +139,15 @@ v.pushthrough_impls.update({
         push_cat_through_index_reduction_into, csp_p.index_reduce_into_ones_p,
         parallel_prod),
 })
+
+
+
+
+# when concating multiple heads_tails, some might have an array of alphas while
+# others have a single alpha. the trick, I suppose, is to stack the alphas
+# before concating. so the pushthrough code needs to do a v.shape on the alpha,
+# and for any that have ndim == 0, we do a stack pushthrough. Then we do a
+# concat of all of them. Yeah.
+
+# def push_concat_through_heads_tails(expr, allow_partial=True):
+    

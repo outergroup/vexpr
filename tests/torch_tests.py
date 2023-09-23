@@ -161,7 +161,7 @@ class TestVexprTorchTests(unittest.TestCase):
                     x1[..., indices] / lengthscale[indices],
                     x2[..., indices] / lengthscale[indices],
                     lengths=(3, 3),
-                    ps=(2, 2)),
+                    p=2),
                            dim=0))
 
         self._vectorize_test(example_inputs, kernel, expected)
@@ -221,7 +221,7 @@ class TestVexprTorchTests(unittest.TestCase):
                         x2[..., indices] / lengthscale[indices],
                         lengths=(len(indices1), len(indices2),
                                  len(indices3), len(joint)),
-                        ps=(2, 2, 2, 2),
+                        p=2,
                         dim=-1)),
                 dim=-1)
 
@@ -326,7 +326,7 @@ class TestVexprTorchTests(unittest.TestCase):
                     x1[..., indices],
                     x2[..., indices],
                     lengths=(3, 3),
-                    ps=(2, 2)),
+                    p=2),
                 dim=0)
 
         import vexpr.core
@@ -341,7 +341,7 @@ class TestVexprTorchTests(unittest.TestCase):
                         x1[..., indices],
                         x2[..., indices],
                         lengths=(3, 3),
-                        ps=(2, 2))
+                        p=2)
                 ),
                 dim=0)
 
@@ -423,12 +423,12 @@ class TestVexprTorchTests(unittest.TestCase):
                     vctorch.cdist_multi(
                         x1[..., indices12], x2[..., indices12],
                         lengths=(2, 2),
-                        ps=(2, 2))),
+                        p=2)),
                 vtorch.exp(
                     -vctorch.cdist_multi(
                         x1[..., indices34], x2[..., indices34],
                         lengths=(2, 2),
-                        ps=(1, 1)))
+                        p=1))
             ])
 
         self._vectorize_test(example_inputs, f, expected)
@@ -466,12 +466,12 @@ class TestVexprTorchTests(unittest.TestCase):
                         vctorch.cdist_multi(
                             x1[..., indices12], x2[..., indices12],
                             lengths=(2, 2),
-                            ps=(2, 2))),
+                            p=2)),
                     vtorch.exp(
                         -vctorch.cdist_multi(
                             x1[..., indices34], x2[..., indices34],
                             lengths=(2, 2),
-                            ps=(1, 1)))
+                            p=1))
                 ]),
                 torch.tensor([0, 2, 1, 3])
             )
