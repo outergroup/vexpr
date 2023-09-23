@@ -118,7 +118,7 @@ numpy.sum(
 )
 ```
 
-This is an equivalent expression with fewer commands. This vectorized expression would have been error-prone to write manually.
+This is an equivalent expression with fewer commands. It indexes into `x1` and `x2` once, not twice, computes distance once, and uses a single vectorized multiply. This vectorized expression would have been error-prone to write manually.
 
 Now we perform partial evaluation on the expression.
 
