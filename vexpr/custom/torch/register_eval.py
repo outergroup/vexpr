@@ -43,7 +43,11 @@ def index_reduce_into_ones_impl(n_reductions, dim, index, source, *args, **kwarg
 core.eval_impls[p.index_reduce_into_ones_p] = index_reduce_into_ones_impl
 
 
-def heads_tails_impl(alpha, dim=0):
-    return torch.stack([alpha, 1.0 - alpha], dim=dim)
+def heads_tails_impl(alpha):
+    if isinstance(alpha, torch.Tensor) and alpha.ndim > 0:
+        # Build [alpha1, 1-alpha1, alpha2, 1-alpha2, ...]
+        return torch.stack([alpha, 1.0 - alpha], dim=-1).view(*alpha.shape[:-1], -1)
+    else:
+        return torch.stack([alpha, 1.0 - alpha])
 
 core.eval_impls[p.heads_tails_p] = heads_tails_impl
