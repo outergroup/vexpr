@@ -418,6 +418,48 @@ class TestVexprTorchTests(unittest.TestCase):
         def expected(x1, x2):
             indices12 = torch.tensor([0, 1, 2, 3])
             indices34 = torch.tensor([4, 5, 6, 7])
+            return vtorch.cat([
+                matern(
+                    vctorch.cdist_multi(
+                        x1[..., indices12], x2[..., indices12],
+                        lengths=torch.tensor([2, 2]),
+                        ps=torch.tensor([2, 2]))),
+                vtorch.exp(
+                    -vctorch.cdist_multi(
+                        x1[..., indices34], x2[..., indices34],
+                        lengths=torch.tensor([2, 2]),
+                        ps=torch.tensor([1, 1])))
+            ])
+
+        self._vectorize_test(example_inputs, f, expected)
+
+    def test_branching_stack_scrambled(self):
+        matern = self._enable_matern()
+
+        example_inputs = dict(
+            x1=torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                             [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]]),
+            x2=torch.tensor([[1.0, 0.9, 1.0, 0.9, 1.0, 0.9, 1.0, 0.9],
+                             [0.5, 0.4, 0.5, 0.4, 0.5, 0.4, 0.5, 0.4]]),
+        )
+
+        @vp.vectorize
+        def f(x1, x2):
+            indices1 = [0, 1]
+            indices2 = [2, 3]
+            indices3 = [4, 5]
+            indices4 = [6, 7]
+            return vtorch.stack([
+                matern(vtorch.cdist(x1[..., indices1], x2[..., indices1], p=2)),
+                vtorch.exp(-vtorch.cdist(x1[..., indices3], x2[..., indices3], p=1)),
+                matern(vtorch.cdist(x1[..., indices2], x2[..., indices2], p=2)),
+                vtorch.exp(-vtorch.cdist(x1[..., indices4], x2[..., indices4], p=1)),
+            ])
+
+        @vp.make_vexpr
+        def expected(x1, x2):
+            indices12 = torch.tensor([0, 1, 2, 3])
+            indices34 = torch.tensor([4, 5, 6, 7])
             return vctorch.shuffle(
                 vtorch.cat([
                     matern(
@@ -431,7 +473,7 @@ class TestVexprTorchTests(unittest.TestCase):
                             lengths=torch.tensor([2, 2]),
                             ps=torch.tensor([1, 1])))
                 ]),
-                torch.tensor([0, 1, 2, 3])
+                torch.tensor([0, 2, 1, 3])
             )
 
         self._vectorize_test(example_inputs, f, expected)
@@ -456,12 +498,39 @@ class TestVexprTorchTests(unittest.TestCase):
 
         @vp.make_vexpr
         def expected(a, b, c):
+            return vtorch.cat([
+                matern(vtorch.stack([a, b, c, a, b, c])),
+                vtorch.exp(-vtorch.stack([a, b, c, a, b, c]))
+            ])
+
+        self._vectorize_test(example_inputs, f, expected)
+
+    def test_branching_cat_scrambled(self):
+        matern = self._enable_matern()
+
+        example_inputs = dict(
+            a=1.2,
+            b=1.3,
+            c=1.4,
+        )
+
+        @vp.vectorize
+        def f(a, b, c):
+            return vtorch.cat([
+                matern(vtorch.stack([a, b, c])),
+                vtorch.exp(-vtorch.stack([a, b, c])),
+                matern(vtorch.stack([a, b, c])),
+                vtorch.exp(-vtorch.stack([a, b, c])),
+            ])
+
+        @vp.make_vexpr
+        def expected(a, b, c):
             return vctorch.shuffle(
                 vtorch.cat([
                     matern(vtorch.stack([a, b, c, a, b, c])),
                     vtorch.exp(-vtorch.stack([a, b, c, a, b, c]))
                 ]),
-                torch.arange(12)
+                torch.tensor([0, 1, 2, 6, 7, 8, 3, 4, 5, 9, 10, 11])
             )
 
         self._vectorize_test(example_inputs, f, expected)

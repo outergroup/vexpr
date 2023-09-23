@@ -369,6 +369,18 @@ def invert_shuffle(indices):
     return inverted_indices
 
 
+def maybe_shuffle(expr, mutated_indices, **kwargs):
+    if torch.equal(torch.as_tensor(mutated_indices),
+                   torch.arange(len(mutated_indices))):
+        # the shuffle would be a no-op
+        return expr
+    else:
+        indices = invert_shuffle(mutated_indices)
+        return v.with_return_shape(
+            vctorch.shuffle(expr, indices, **kwargs),
+            v.shape(expr))
+
+
 def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
     assert expr.op == p.stack_p
 
@@ -411,16 +423,13 @@ def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
                                    **expr.kwargs)
 
-    indices = invert_shuffle(applicable_indices + remainder_indices)
-
-    return v.with_return_shape(
-        vctorch.shuffle(
-            v.with_return_shape(
-                vtorch.cat([applicable, remainder], **expr.kwargs),
-                result_shape),
-            indices,
-            **expr.kwargs),
+    result = v.with_return_shape(
+        vtorch.cat([applicable, remainder], **expr.kwargs),
         result_shape)
+
+    return maybe_shuffle(result,
+                         applicable_indices + remainder_indices,
+                         **expr.kwargs)
 
 
 def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
@@ -469,18 +478,13 @@ def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
 
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
                                    **expr.kwargs)
+    result = v.with_return_shape(vtorch.cat([applicable, remainder],
+                                            **expr.kwargs),
+                                 result_shape)
 
-    indices = invert_shuffle(applicable_indices + remainder_indices)
-
-    return v.with_return_shape(
-        vctorch.shuffle(
-            v.with_return_shape(
-                vtorch.cat([applicable, remainder],
-                              **expr.kwargs),
-                result_shape),
-            indices,
-            **expr.kwargs),
-        result_shape)
+    return maybe_shuffle(result,
+                         applicable_indices + remainder_indices,
+                         **expr.kwargs)
 
 
 def push_cat_through_truediv(expr, allow_partial=True):
