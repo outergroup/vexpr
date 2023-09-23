@@ -26,8 +26,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     for child_expr in expr.args[0]:
         left.append(child_expr.args[0])
         right.append(child_expr.args[1])
-        lengths.append(child_expr.kwargs["lengths"])
-        ps.append(child_expr.kwargs["ps"])
+        lengths += child_expr.kwargs["lengths"]
+        ps += child_expr.kwargs["ps"]
         axes.append(child_expr.kwargs.get("dim", None))
 
     canonicalized_axes = [(axis if axis is not None else 0)
@@ -41,8 +41,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
     kwargs = dict(
-        lengths=torch.cat(lengths),
-        ps=torch.cat(ps),
+        lengths=tuple(lengths),
+        ps=tuple(ps),
     )
     if axis is not None:
         kwargs["dim"] = axis

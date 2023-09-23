@@ -160,8 +160,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 vtorch.sum(vctorch.cdist_multi(
                     x1[..., indices] / lengthscale[indices],
                     x2[..., indices] / lengthscale[indices],
-                    lengths=torch.tensor([3, 3]),
-                    ps=torch.tensor([2, 2])),
+                    lengths=(3, 3),
+                    ps=(2, 2)),
                            dim=0))
 
         self._vectorize_test(example_inputs, kernel, expected)
@@ -219,9 +219,9 @@ class TestVexprTorchTests(unittest.TestCase):
                     * vctorch.cdist_multi(
                         x1[..., indices] / lengthscale[indices],
                         x2[..., indices] / lengthscale[indices],
-                        lengths=torch.tensor([len(indices1), len(indices2),
-                                          len(indices3), len(joint)]),
-                        ps=torch.tensor([2, 2, 2, 2]),
+                        lengths=(len(indices1), len(indices2),
+                                 len(indices3), len(joint)),
+                        ps=(2, 2, 2, 2),
                         dim=-1)),
                 dim=-1)
 
@@ -325,8 +325,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 * vctorch.cdist_multi(
                     x1[..., indices],
                     x2[..., indices],
-                    lengths=torch.tensor([3, 3]),
-                    ps=torch.tensor([2, 2])),
+                    lengths=(3, 3),
+                    ps=(2, 2)),
                 dim=0)
 
         import vexpr.core
@@ -340,8 +340,8 @@ class TestVexprTorchTests(unittest.TestCase):
                     vctorch.cdist_multi(
                         x1[..., indices],
                         x2[..., indices],
-                        lengths=torch.tensor([3, 3]),
-                        ps=torch.tensor([2, 2]))
+                        lengths=(3, 3),
+                        ps=(2, 2))
                 ),
                 dim=0)
 
@@ -422,13 +422,13 @@ class TestVexprTorchTests(unittest.TestCase):
                 matern(
                     vctorch.cdist_multi(
                         x1[..., indices12], x2[..., indices12],
-                        lengths=torch.tensor([2, 2]),
-                        ps=torch.tensor([2, 2]))),
+                        lengths=(2, 2),
+                        ps=(2, 2))),
                 vtorch.exp(
                     -vctorch.cdist_multi(
                         x1[..., indices34], x2[..., indices34],
-                        lengths=torch.tensor([2, 2]),
-                        ps=torch.tensor([1, 1])))
+                        lengths=(2, 2),
+                        ps=(1, 1)))
             ])
 
         self._vectorize_test(example_inputs, f, expected)
@@ -465,13 +465,13 @@ class TestVexprTorchTests(unittest.TestCase):
                     matern(
                         vctorch.cdist_multi(
                             x1[..., indices12], x2[..., indices12],
-                            lengths=torch.tensor([2, 2]),
-                            ps=torch.tensor([2, 2]))),
+                            lengths=(2, 2),
+                            ps=(2, 2))),
                     vtorch.exp(
                         -vctorch.cdist_multi(
                             x1[..., indices34], x2[..., indices34],
-                            lengths=torch.tensor([2, 2]),
-                            ps=torch.tensor([1, 1])))
+                            lengths=(2, 2),
+                            ps=(1, 1)))
                 ]),
                 torch.tensor([0, 2, 1, 3])
             )

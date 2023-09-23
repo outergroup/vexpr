@@ -668,8 +668,8 @@ def push_stack_through_cdist(expr, allow_partial=True):
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
     kwargs = dict(
-        lengths=torch.tensor(lengths),
-        ps=torch.tensor(ps),
+        lengths=tuple(lengths),
+        ps=tuple(ps),
     )
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
