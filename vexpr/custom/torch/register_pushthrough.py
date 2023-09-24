@@ -15,6 +15,53 @@ from vexpr.torch.utils import (
 )
 
 
+def push_cat_through_shuffle(expr, allow_partial=True):
+    assert expr.op == p.cat_p
+
+    cat_dim = expr.kwargs.get("dim", 0)
+
+    # get a list of shuffles with the same dim by wrapping everything else with
+    # identity shuffles
+    child_exprs = [(child_expr
+                    if child_expr.op == csp_p.shuffle_p
+                    and child_expr.kwargs.get("dim", 0) == cat_dim
+                    else v.with_return_shape(vctorch.shuffle(
+                            child_expr,
+                            torch.arange(v.shape(child_expr)[cat_dim])),
+                                             v.shape(child_expr)))
+                   for child_expr in expr.args[0]]
+
+    grandchildren = []
+    indices = []
+    base = 0
+    for child_expr in child_exprs:
+        grandchildren.append(child_expr.args[0])
+        child_indices = child_expr.args[1]
+        indices.append(child_indices + base)
+        base += len(child_indices)
+
+    result_shape = torch_cat_shape([v.shape(child_expr)
+                                    for child_expr in child_exprs],
+                                   cat_dim)
+
+    ret = v._vectorize(
+        v.with_return_shape(
+            vtorch.cat(grandchildren, **expr.kwargs),
+            result_shape
+        )
+    )
+    indices = torch.cat(indices)
+
+    if not torch.equal(indices, torch.arange(len(indices))):
+        ret = v.with_return_shape(vctorch.shuffle(ret, indices, **expr.kwargs),
+                                  result_shape)
+
+    return ret
+
+
+v.pushthrough_impls[(p.cat_p, csp_p.shuffle_p)] = push_cat_through_shuffle
+
+
 def push_cat_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
