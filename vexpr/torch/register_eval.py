@@ -53,6 +53,7 @@ core.eval_impls.update({
     p.sum_p: allow_listlike_arg0(torch.sum),
     p.prod_p: allow_listlike_arg0(torch.prod),
     p.cdist_p: torch.cdist,
+    p.scatter_p: torch.scatter,
 })
 
 

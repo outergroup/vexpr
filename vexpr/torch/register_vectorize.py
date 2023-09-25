@@ -51,15 +51,6 @@ def cat_vectorize(expr):
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
-    # TODO: in general, every user-provided stack (and maybe cat, and
-    # other things?) should be pushed through before trying other stuff. they
-    # just cause confusion. One solution is to do a first pass that is bottom
-    # up, performing a vectorize on each stack, starting from the leaf nodes.
-    # another solution is to add special logic to ~every passthrough that tries
-    # to eliminate certain ops from the children before proceeding with specific
-    # logic.
-
-
     # TODO if any child ops are a cat with the same dim, absorb their
     # children
 
@@ -94,7 +85,11 @@ def cat_vectorize(expr):
                 except vexpr.vectorization.CannotVectorize:
                     pass
 
-    return expr
+    if len(expr.args[0]) == 1:
+        # If cat-ing one item, just return it.
+        return expr.args[0][0]
+    else:
+        return expr
 
 def reduction_vectorize(op, expr):
     assert expr.op == op

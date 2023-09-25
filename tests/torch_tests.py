@@ -255,7 +255,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 beta_w
                 * vctorch.sum_multi(
                     vctorch.split_and_stack(
-                        vtorch.cat([dirichlet_w, torch.ones(1)], dim=-1)
+                        vtorch.scatter(vtorch.ones((4,)), -1, torch.tensor([0, 1, 2]),
+                                       dirichlet_w)
                         * vctorch.cdist_multi(
                             vctorch.split_and_stack(x1[..., indices]
                                                     / lengthscale[indices],
