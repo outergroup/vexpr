@@ -356,6 +356,8 @@ def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
             applicable.append(child_expr)
             applicable_indices += result_indices
         else:
+            if not allow_partial:
+                raise v.CannotVectorize()
             remainder.append(child_expr)
             remainder_indices += result_indices
         base += num_indices

@@ -115,6 +115,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
             right.append(child_expr.args[1])
             axes.append(child_expr.kwargs.get("dim", None))
         else:
+            if not allow_partial:
+                raise v.CannotVectorize()
             remainder_indices += result_indices
             remainder.append(child_expr)
         base += num_indices

@@ -141,7 +141,7 @@ vectorize_impls.update({
     core.operator_getitem_p: operator_vectorize,
 })
 
-# TODO needed? rename to CannotPush?
+
 class CannotVectorize(Exception):
     pass
 
