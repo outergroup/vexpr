@@ -147,6 +147,49 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
 v.pushthrough_impls[(p.cat_p, csp_p.cdist_multi_p)] = push_cat_through_cdist_multi
 
 
+def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
+                                     fill_value, expr, all_partial=True):
+    assert expr.op == p.cat_p
+
+    cat_dim = expr.kwargs.get("dim", 0)
+
+    reduction_dims = [child_expr.kwargs.get("dim", None)
+                      for child_expr in expr.args[0]
+                      if isinstance(child_expr, vp.Vexpr)
+                      and child_expr.op == reduction_multi_p]
+    assert all(dim == reduction_dims[0] for dim in reduction_dims)
+    reduction_dim = reduction_dims[0]
+
+    lengths = []
+    grandchildren = []
+    for child_expr in expr.args[0]:
+        if isinstance(child_expr, vp.Vexpr) \
+           and child_expr.op == reduction_multi_p:
+            split_and_stack_expr = child_expr.args[0]
+            assert split_and_stack_expr.op == csp_p.split_and_stack_p
+            lengths += split_and_stack_expr.kwargs["lengths"]
+            grandchildren.append(split_and_stack_expr.args[0])
+        else:
+            grandchildren.append(child_expr)
+            lengths.append(v.shape(child_expr)[cat_dim])
+
+    grandchildren = v._vectorize(vtorch.cat(grandchildren, dim=cat_dim))
+    grandchildren = vctorch.split_and_stack(grandchildren,
+                                            **split_and_stack_kwargs(lengths),
+                                            fill_value=fill_value,
+                                            dim=reduction_dim)
+
+    return v.with_return_shape(parallel_reduction(grandchildren,
+                                                  dim=reduction_dim),
+                               torch_cat_shape([v.shape(child_expr)
+                                                for child_expr in expr.args[0]],
+                                               dim=cat_dim))
+
+v.pushthrough_impls[(p.cat_p, csp_p.sum_multi_p)] = partial(
+    push_cat_through_reduction_multi, csp_p.sum_multi_p, vctorch.sum_multi, 0.)
+v.pushthrough_impls[(p.cat_p, csp_p.prod_multi_p)] = partial(
+    push_cat_through_reduction_multi, csp_p.prod_multi_p, vctorch.prod_multi, 1.)
+
 
 def push_cat_through_index_reduction_into(
         index_reduction_into_p, parallel_reduction,

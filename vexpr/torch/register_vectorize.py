@@ -15,6 +15,8 @@ PRIORITIZED_OPS = set([
     core.operator_matmul_p,
     p.index_add_p, p.index_reduce_p,
     cp.index_add_into_zeros_p, cp.index_reduce_into_ones_p,
+    cp.sum_multi_p, cp.prod_multi_p,
+    cp.shuffle_p,
 ])
 
 
