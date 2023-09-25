@@ -15,6 +15,7 @@ from vexpr.torch.utils import (
     torch_cat_shape,
     torch_stack_shape,
     cat_remainder_then_combine,
+    push_stack_through_reduction,
 )
 
 
@@ -185,10 +186,18 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
                                                 for child_expr in expr.args[0]],
                                                dim=cat_dim))
 
-v.pushthrough_impls[(p.cat_p, csp_p.sum_multi_p)] = partial(
-    push_cat_through_reduction_multi, csp_p.sum_multi_p, vctorch.sum_multi, 0.)
-v.pushthrough_impls[(p.cat_p, csp_p.prod_multi_p)] = partial(
-    push_cat_through_reduction_multi, csp_p.prod_multi_p, vctorch.prod_multi, 1.)
+v.pushthrough_impls.update({
+    (p.cat_p, csp_p.sum_multi_p): partial(
+        push_cat_through_reduction_multi, csp_p.sum_multi_p, vctorch.sum_multi, 0.),
+    (p.cat_p, csp_p.prod_multi_p): partial(
+        push_cat_through_reduction_multi, csp_p.prod_multi_p, vctorch.prod_multi, 1.),
+    (p.cat_p, csp_p.fast_prod_positive_multi_p): partial(
+        push_cat_through_reduction_multi, csp_p.fast_prod_positive_multi_p,
+        vctorch.fast_prod_positive_multi, 1.),
+    (p.stack_p, csp_p.fast_prod_positive_p): partial(
+        push_stack_through_reduction, csp_p.fast_prod_positive_p,
+        vctorch.fast_prod_positive_multi, 1.)
+})
 
 
 def push_cat_through_index_reduction_into(
@@ -257,5 +266,5 @@ v.pushthrough_impls.update({
 # and for any that have ndim == 0, we do a stack pushthrough. Then we do a
 # concat of all of them. Yeah.
 
-# def push_concat_through_heads_tails(expr, allow_partial=True):
-    
+def push_concat_through_heads_tails(expr, allow_partial=True):
+    pass

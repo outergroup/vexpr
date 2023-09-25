@@ -19,6 +19,7 @@ from vexpr.torch.utils import (
     torch_stack_shape2,
     stack_remainder_then_combine,
     cat_remainder_then_combine,
+    push_stack_through_reduction,
 )
 
 
@@ -256,67 +257,6 @@ def push_cat_through_cat(expr, allow_partial=True):
         torch_cat_shape([v.shape(child_expr) for child_expr in all_cat_vexprs],
                         cat_dim)
     )
-
-
-def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
-                                 expr, allow_partial=True):
-    assert expr.op == p.stack_p
-
-    exprs_to_stack = expr.args[0]
-    all_reduction_operands = []
-    lengths = []
-
-    stack_axis = expr.kwargs.get("dim", 0)
-
-    for i, child_expr in enumerate(exprs_to_stack):
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op == reduction_p:
-
-            r_axis = child_expr.kwargs.get("dim", None)
-            if r_axis is None:
-                raise NotImplementedError()
-
-            r_arg0 = child_expr.args[0]
-            if isinstance(r_arg0, vp.Vexpr):
-                num_operands = v.shape(r_arg0)[r_axis]
-            else:
-                num_operands = len(r_arg0)
-                # treat array_like as an implicit stack.
-                r_arg0 = v.with_return_shape(vtorch.stack(r_arg0),
-                                             dict(return_shape=torch_stack_shape(
-                                                 v.shape(r_arg0[0]), num_operands)))
-
-            if r_axis != stack_axis:
-                r_arg0 = vtorch.moveaxis(r_arg0, r_axis, stack_axis)
-                r_arg0 = v.pushthrough(r_arg0, child_expr.op)
-                r_axis = stack_axis
-
-            # Incorporate child_expr's computation into a vectorized reduction.
-            all_reduction_operands.append(r_arg0)
-            lengths.append(num_operands)
-        else:
-            # Pass child_expr through. Implement Identity as a reduction of 1
-            # element.
-
-            # TODO is this is gross to do a full vectorize here?
-            child_expr = vtorch.stack([child_expr], dim=stack_axis)
-            child_expr = v._vectorize(child_expr)
-            all_reduction_operands.append(child_expr)
-            lengths.append(1)
-
-    all_reduction_operands = v._vectorize(vtorch.cat(all_reduction_operands,
-                                                     dim=stack_axis))
-    all_reduction_operands = vctorch.split_and_stack(all_reduction_operands,
-                                                     **split_and_stack_kwargs(lengths),
-                                                     fill_value=fill_value,
-                                                     dim=stack_axis)
-    result = parallel_reduction(all_reduction_operands, dim=stack_axis)
-
-    child_shape = next(v.shape(expr) for expr in exprs_to_stack
-                       if isinstance(expr, vp.Vexpr))
-
-    return v.with_return_shape(result, torch_stack_shape(child_shape,
-                                                         len(exprs_to_stack),
-                                                         dim=stack_axis))
 
 
 def push_cat_through_index_reduction(index_reduction_p, parallel_reduction,
@@ -575,13 +515,16 @@ v.pushthrough_impls.update({
                                   vctorch.sum_multi, 0.),
     (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
                                    vctorch.prod_multi, 1.),
+    (p.stack_p, csp_p.fast_prod_positive_p): partial(
+        push_stack_through_reduction, csp_p.fast_prod_positive_p,
+        vctorch.fast_prod_positive_multi, 1.),
     (p.cat_p, p.index_add_p): partial(push_cat_through_index_reduction,
-                                         p.index_add_p,
-                                         parallel_sum),
+                                      p.index_add_p,
+                                      parallel_sum),
     # TODO this is hardcoded to prod, but index reduce might use e.g. mean
     (p.cat_p, p.index_reduce_p): partial(push_cat_through_index_reduction,
-                                            p.index_reduce_p,
-                                            parallel_prod),
+                                         p.index_reduce_p,
+                                         parallel_prod),
     (p.stack_p, p.exp_p): partial(
         push_stack_through_unary_elementwise, p.exp_p),
     (p.cat_p, p.exp_p): partial(

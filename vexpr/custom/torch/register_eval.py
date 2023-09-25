@@ -72,6 +72,35 @@ def sum_multi_impl(x, dim=None):
 core.eval_impls[p.sum_multi_p] = sum_multi_impl
 
 
+def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
+    with torch.profiler.record_function("fast_prod_positive"):
+        # Much faster than torch.prod in the backward pass, since it doesn't require
+        # a GPU synchronize.
+        # https://twitter.com/mrcslws/status/1589721597396815873
+        return x.clamp(min=epsilon).log().sum(dim=dim).exp()
+
+core.eval_impls[p.fast_prod_positive_p] = fast_prod_positive_impl
+
+
+def fast_prod_positive_multi_impl(x, dim=None, epsilon=1e-10):
+    with torch.profiler.record_function("fast_prod_positive_multi"):
+        if dim is None:
+            batch_dim = 0
+        elif dim < 0:
+            batch_dim = dim - 1
+        else:
+            batch_dim = dim
+
+        # Use vmap so that "dim" can still be in the language of the prod. For
+        # example, when performing a set of prods on tensors over dim 0, without
+        # vmap we would make dim 0 a batch dimension and convert the dim to 1.
+        f = torch.vmap(fast_prod_positive_impl, in_dims=batch_dim,
+                       out_dims=dim)
+        return f(x, dim=dim, epsilon=epsilon)
+
+core.eval_impls[p.fast_prod_positive_multi_p] = fast_prod_positive_multi_impl
+
+
 def prod_multi_impl(x, dim=None):
     with torch.profiler.record_function("prod_multi"):
         if dim is None:
