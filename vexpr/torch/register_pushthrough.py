@@ -10,6 +10,9 @@ import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.vectorization import _vectorize, with_metadata
+from vexpr.custom.torch.utils import (
+    split_and_stack_kwargs,
+)
 from vexpr.torch.utils import (
     torch_cat_shape,
     torch_stack_shape,
@@ -633,10 +636,12 @@ def push_stack_through_cdist(expr, allow_partial=True):
     left = v._vectorize(vtorch.cat(left, dim=-1))
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
-    kwargs = dict(
-        lengths=tuple(lengths),
-        p=metric,
-    )
+    expansion_kwargs = split_and_stack_kwargs(lengths)
+    left = vctorch.split_and_stack(left, **expansion_kwargs, dim=-1)
+    right = vctorch.split_and_stack(right, **expansion_kwargs, dim=-1)
+
+    kwargs = dict(p=metric)
+    kwargs["p"] = metric
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
 

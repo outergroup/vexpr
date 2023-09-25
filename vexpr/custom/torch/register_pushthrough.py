@@ -8,6 +8,9 @@ import vexpr.custom.torch.primitives as csp_p
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
+from vexpr.custom.torch.utils import (
+    split_and_stack_kwargs,
+)
 from vexpr.torch.utils import (
     torch_cat_shape,
     torch_stack_shape,
@@ -62,6 +65,26 @@ def push_cat_through_shuffle(expr, allow_partial=True):
 v.pushthrough_impls[(p.cat_p, csp_p.shuffle_p)] = push_cat_through_shuffle
 
 
+def combine_split_and_stack(exprs, dim=0):
+    assert all(expr.op == csp_p.split_and_stack_p
+               for expr in exprs)
+
+    lengths = []
+    children = []
+    for expr in exprs:
+        assert expr.op == csp_p.split_and_stack_p
+        lengths += expr.kwargs["lengths"]
+        children.append(expr.args[0])
+
+    children = v._vectorize(vtorch.cat(children, dim=dim))
+
+    return vctorch.split_and_stack(
+        children,
+        **split_and_stack_kwargs(lengths),
+        dim=dim,
+    )
+
+
 def push_cat_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
@@ -73,7 +96,6 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
 
     left = []
     right = []
-    lengths = []
     axes = []
 
     applicable_exprs = []
@@ -90,7 +112,6 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
             applicable_exprs.append(child_expr)
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
-            lengths += child_expr.kwargs["lengths"]
             axes.append(child_expr.kwargs.get("dim", None))
         else:
             remainder_indices += result_indices
@@ -104,13 +125,10 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
         raise ValueError("Expected same axes", axes)
     axis = axes[0]
 
-    left = v._vectorize(vtorch.cat(left, dim=-1))
-    right = v._vectorize(vtorch.cat(right, dim=-1))
+    left = combine_split_and_stack(left, dim=-1)
+    right = combine_split_and_stack(right, dim=-1)
 
-    kwargs = dict(
-        lengths=tuple(lengths),
-        p=metric,
-    )
+    kwargs = dict(p=metric)
     if axis is not None:
         kwargs["dim"] = axis
 

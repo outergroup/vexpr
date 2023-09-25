@@ -12,29 +12,35 @@ def shuffle_impl(arr, indices, dim=0):
 core.eval_impls[p.shuffle_p] = shuffle_impl
 
 
-def cdist_multi_impl(x1, x2, p, lengths, dim=0):
+
+def split_and_stack_impl(x, lengths, expanded_length, expanded_indices,
+                         max_length, dim=0):
+    """
+    Technically, this function receives redundant information. It receives
+    the list of lengths because this makes it easier for the vectorizer to
+    concatenate calls to split_and_pad, so that it doesn't have to reconstruct
+    the lengths from the expanded_indices.
+    """
+    if dim != -1:
+        raise NotImplementedError()
+
+    with torch.profiler.record_function("split_and_stack"):
+        final_shape = (*x.shape[:-1], len(lengths), max_length)
+        if expanded_length == x.shape[dim]:
+            # no expansion needed
+            return x.view(final_shape)
+
+        x_expanded = x.new_zeros((*x.shape[:-1], expanded_length))
+        x_expanded[..., expanded_indices] = x
+        return x_expanded.view(final_shape)
+
+core.eval_impls[p.split_and_stack_p] = split_and_stack_impl
+
+
+def cdist_multi_impl(x1, x2, p, dim=0):
     with torch.profiler.record_function("cdist_multi"):
-        max_length = max(lengths)
-        n = max_length * len(lengths)
-
-        indices = []
-        base = 0
-        for length in lengths:
-            indices.append(torch.arange(base, base + length))
-            base += max_length
-        indices = torch.cat(indices)
-
-        x1_ = x1.new_zeros((*x1.shape[:-1], n))
-        x1_[..., indices] = x1
-        x1_ = x1_.view((*x1.shape[:-1], len(lengths), max_length))
-
-        x2_ = x2.new_zeros((*x2.shape[:-1], n))
-        x2_[..., indices] = x2
-        x2_ = x2_.view((*x2.shape[:-1], len(lengths), max_length))
-
         f = torch.vmap(torch.cdist, in_dims=(-2, -2), out_dims=dim)
-
-        return f(x1_, x2_, p=p)
+        return f(x1, x2, p=p)
 
 core.eval_impls[p.cdist_multi_p] = cdist_multi_impl
 

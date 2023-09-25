@@ -156,11 +156,21 @@ class TestVexprTorchTests(unittest.TestCase):
         @vp.make_vexpr
         def expected(x1, x2, scale, lengthscale):
             indices = torch.tensor([0, 1, 2, 2, 3, 4])
+            split_stack_kwargs = dict(
+                lengths=[3, 3],
+                expanded_length=6,
+                expanded_indices=torch.arange(6),
+                max_length=3,
+                dim=-1,
+            )
             return scale * (
                 vtorch.sum(vctorch.cdist_multi(
-                    x1[..., indices] / lengthscale[indices],
-                    x2[..., indices] / lengthscale[indices],
-                    lengths=(3, 3),
+                    vctorch.split_and_stack(x1[..., indices]
+                                            / lengthscale[indices],
+                                            **split_stack_kwargs),
+                    vctorch.split_and_stack(x2[..., indices]
+                                            / lengthscale[indices],
+                                            **split_stack_kwargs),
                     p=2),
                            dim=0))
 
@@ -210,6 +220,13 @@ class TestVexprTorchTests(unittest.TestCase):
         @vp.make_vexpr
         def expected(x1, x2, scale, beta_w, dirichlet_w, lengthscale):
             indices = torch.tensor(indices1 + indices2 + indices3 + joint)
+            split_stack_kwargs = dict(
+                lengths=[1, 1, 1, 3],
+                expanded_length=12,
+                expanded_indices=torch.tensor([0, 3, 6, 9, 10, 11]),
+                max_length=3,
+                dim=-1,
+            )
             return scale * vtorch.sum(
                 beta_w
                 * vctorch.index_add_into_zeros(
@@ -217,10 +234,12 @@ class TestVexprTorchTests(unittest.TestCase):
                     torch.tensor([0, 0, 0, 1]),
                     vtorch.cat([dirichlet_w, torch.ones(1)], dim=-1)
                     * vctorch.cdist_multi(
-                        x1[..., indices] / lengthscale[indices],
-                        x2[..., indices] / lengthscale[indices],
-                        lengths=(len(indices1), len(indices2),
-                                 len(indices3), len(joint)),
+                        vctorch.split_and_stack(x1[..., indices]
+                                                / lengthscale[indices],
+                                                **split_stack_kwargs),
+                        vctorch.split_and_stack(x2[..., indices]
+                                                / lengthscale[indices],
+                                                **split_stack_kwargs),
                         p=2,
                         dim=-1)),
                 dim=-1)
@@ -316,16 +335,26 @@ class TestVexprTorchTests(unittest.TestCase):
                             w2 * vtorch.cdist(x1[..., [0, 3, 4]], x2[..., [0, 3, 4]])],
                            dim=0)
 
+        split_stack_kwargs = dict(
+            lengths=[3, 3],
+            expanded_length=6,
+            expanded_indices=torch.arange(6),
+            max_length=3,
+            dim=-1,
+        )
+
         # print(f.vexpr)
         @vp.make_vexpr
         def expected_vectorized(x1, x2, w1, w2):
             indices = torch.tensor([0, 1, 2, 0, 3, 4])
+
             return vtorch.sum(
                 vtorch.reshape(vtorch.stack([w1, w2]), (2, 1, 1))
                 * vctorch.cdist_multi(
-                    x1[..., indices],
-                    x2[..., indices],
-                    lengths=(3, 3),
+                    vctorch.split_and_stack(x1[..., indices],
+                                            **split_stack_kwargs),
+                    vctorch.split_and_stack(x2[..., indices],
+                                            **split_stack_kwargs),
                     p=2),
                 dim=0)
 
@@ -338,9 +367,10 @@ class TestVexprTorchTests(unittest.TestCase):
                 vexpr.core.operator_mul(
                     torch.tensor([[[0.75]], [[0.25]]]),
                     vctorch.cdist_multi(
-                        x1[..., indices],
-                        x2[..., indices],
-                        lengths=(3, 3),
+                        vctorch.split_and_stack(x1[..., indices],
+                                                **split_stack_kwargs),
+                        vctorch.split_and_stack(x2[..., indices],
+                                                **split_stack_kwargs),
                         p=2)
                 ),
                 dim=0)
@@ -418,16 +448,27 @@ class TestVexprTorchTests(unittest.TestCase):
         def expected(x1, x2):
             indices12 = torch.tensor([0, 1, 2, 3])
             indices34 = torch.tensor([4, 5, 6, 7])
+            split_stack_kwargs = dict(
+                lengths=[2, 2],
+                expanded_length=4,
+                expanded_indices=torch.arange(4),
+                max_length=2,
+                dim=-1,
+            )
             return vtorch.cat([
                 matern(
                     vctorch.cdist_multi(
-                        x1[..., indices12], x2[..., indices12],
-                        lengths=(2, 2),
+                        vctorch.split_and_stack(x1[..., indices12],
+                                                **split_stack_kwargs),
+                        vctorch.split_and_stack(x2[..., indices12],
+                                                **split_stack_kwargs),
                         p=2)),
                 vtorch.exp(
                     -vctorch.cdist_multi(
-                        x1[..., indices34], x2[..., indices34],
-                        lengths=(2, 2),
+                        vctorch.split_and_stack(x1[..., indices34],
+                                                **split_stack_kwargs),
+                        vctorch.split_and_stack(x2[..., indices34],
+                                                **split_stack_kwargs),
                         p=1))
             ])
 
@@ -460,17 +501,28 @@ class TestVexprTorchTests(unittest.TestCase):
         def expected(x1, x2):
             indices12 = torch.tensor([0, 1, 2, 3])
             indices34 = torch.tensor([4, 5, 6, 7])
+            split_stack_kwargs = dict(
+                lengths=[2, 2],
+                expanded_length=4,
+                expanded_indices=torch.arange(4),
+                max_length=2,
+                dim=-1,
+            )
             return vctorch.shuffle(
                 vtorch.cat([
                     matern(
                         vctorch.cdist_multi(
-                            x1[..., indices12], x2[..., indices12],
-                            lengths=(2, 2),
+                            vctorch.split_and_stack(x1[..., indices12],
+                                                    **split_stack_kwargs),
+                            vctorch.split_and_stack(x2[..., indices12],
+                                                    **split_stack_kwargs),
                             p=2)),
                     vtorch.exp(
                         -vctorch.cdist_multi(
-                            x1[..., indices34], x2[..., indices34],
-                            lengths=(2, 2),
+                            vctorch.split_and_stack(x1[..., indices34],
+                                                    **split_stack_kwargs),
+                            vctorch.split_and_stack(x2[..., indices34],
+                                                    **split_stack_kwargs),
                             p=1))
                 ]),
                 torch.tensor([0, 2, 1, 3])
