@@ -260,13 +260,42 @@ v.pushthrough_impls.update({
 })
 
 
-
-
-# when concating multiple heads_tails, some might have an array of alphas while
-# others have a single alpha. the trick, I suppose, is to stack the alphas
-# before concating. so the pushthrough code needs to do a v.shape on the alpha,
-# and for any that have ndim == 0, we do a stack pushthrough. Then we do a
-# concat of all of them. Yeah.
-
 def push_concat_through_heads_tails(expr, allow_partial=True):
-    pass
+    assert expr.op == p.cat_p
+
+    assert all(isinstance(child_expr, vp.Vexpr)
+               and child_expr.op == csp_p.heads_tails_p
+               for child_expr in expr.args[0])
+
+    if len(expr.args[0]) == 1:
+        return v._vectorize(expr.args[0][0])
+
+    cat_dim = expr.kwargs.get("dim", 0)
+    alphas = []
+    for child_expr in expr.args[0]:
+        if (not isinstance(child_expr, vp.Vexpr)
+            or child_expr.op != csp_p.heads_tails_p):
+            raise NotImplementedError()
+
+        alpha = child_expr.args[0]
+        alpha_shape = v.shape(alpha)
+        if len(v.shape(alpha)) == 0:
+            alpha = v.with_return_shape(
+                v._vectorize(vtorch.stack([alpha], dim=cat_dim)),
+                (1,))
+        alphas.append(alpha)
+
+    alphas = v._vectorize(v.with_return_shape(
+        vtorch.cat(alphas, dim=cat_dim),
+        torch_cat_shape([v.shape(alpha)
+                         for alpha in alphas],
+                        dim=cat_dim)
+        ))
+    return v.with_return_shape(vctorch.heads_tails(alphas),
+                               torch_cat_shape([v.shape(child_expr)
+                                                for child_expr in expr.args[0]],
+                                               dim=cat_dim))
+
+v.pushthrough_impls.update({
+    (p.cat_p, csp_p.heads_tails_p): push_concat_through_heads_tails
+})

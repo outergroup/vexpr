@@ -210,7 +210,8 @@ def push_cat_through_stack(expr, allow_partial=True):
     # initial hack: assume all args are stack_p
     assert all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
                for arg in expr.args[0])
-    assert expr.kwargs.get("dim", 0) == 0
+
+    dim = expr.kwargs.get("dim", 0)
 
     # (when i remove the hack, the result is going to be
     # shuffle(cat([stack, non-stack-exprs])), or remove the outer
@@ -219,6 +220,7 @@ def push_cat_through_stack(expr, allow_partial=True):
     # todo push vectorize through children
     all_stacked_vexprs = []
     for child_expr in expr.args[0]:
+        assert child_expr.kwargs.get("dim", 0) == dim
         all_stacked_vexprs.extend(child_expr.args[0])
 
     assert all(child_expr.kwargs == expr.args[0][0].kwargs
@@ -226,7 +228,7 @@ def push_cat_through_stack(expr, allow_partial=True):
     stack_kwargs = expr.args[0][0].kwargs
 
     expr = v.with_return_shape(
-        vtorch.stack(all_stacked_vexprs),
+        vtorch.stack(all_stacked_vexprs, **stack_kwargs),
         torch_stack_shape2([v.shape(d) for d in all_stacked_vexprs],
                            **stack_kwargs)
     )
