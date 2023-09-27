@@ -105,7 +105,8 @@ def push_cat_through_getitem(expr, allow_partial=True):
     select_axis = all_select_axes[0]
 
     axis = expr.kwargs.get("dim", 0)
-    ndim = len(v.shape(select_target))
+    select_target_shape = v.shape(select_target)
+    ndim = len(select_target_shape)
     if not canonical_axis(axis, ndim) == canonical_axis(select_axis, ndim):
         raise NotImplementedError()
     else:
@@ -113,6 +114,12 @@ def push_cat_through_getitem(expr, allow_partial=True):
         axis = select_axis
 
     indices = torch.cat(all_select_indices)
+
+    if torch.equal(indices, torch.arange(select_target_shape[axis])):
+        # the vectorized getitem is selecting all elements, so it can be
+        # factored out.
+        return select_target
+
     if axis == 0:
         new_selection = indices
     elif axis < 0:
