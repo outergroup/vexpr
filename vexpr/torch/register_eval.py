@@ -23,22 +23,24 @@ v.shape_impls.update({
 
 def allow_listlike_arg0(torch_func):
     def wrapper(arg0, *args, **kwargs):
-        if isinstance(arg0, (list, tuple)):
-            if len(arg0) > 1 and isinstance(arg0[0], torch.Tensor):
-                return torch_func(torch.stack(arg0), *args, **kwargs)
+        with torch.profiler.record_function("listlike_of_tensors"):
+            if isinstance(arg0, (list, tuple)):
+                if len(arg0) > 1 and isinstance(arg0[0], torch.Tensor):
+                    return torch_func(torch.stack(arg0), *args, **kwargs)
+                else:
+                    return torch_func(torch.tensor(arg0), *args, **kwargs)
             else:
-                return torch_func(torch.tensor(arg0), *args, **kwargs)
-        else:
-            return torch_func(arg0, *args, **kwargs)
+                return torch_func(arg0, *args, **kwargs)
     return wrapper
 
 def listlike_of_tensors(torch_func):
     def wrapper(arg0, *args, **kwargs):
-        if isinstance(arg0, (list, tuple)):
-            return torch_func([torch.as_tensor(x)
-                               for x in arg0], *args, **kwargs)
-        else:
-            return torch_func(arg0, *args, **kwargs)
+        with torch.profiler.record_function("listlike_of_tensors"):
+            if isinstance(arg0, (list, tuple)):
+                return torch_func([torch.as_tensor(x)
+                                   for x in arg0], *args, **kwargs)
+            else:
+                return torch_func(arg0, *args, **kwargs)
     return wrapper
 
 core.eval_impls.update({

@@ -1,6 +1,7 @@
 import torch
 
 from vexpr import core
+from vexpr.torch.register_eval import allow_listlike_arg0
 from . import primitives as p
 
 def shuffle_impl(arr, indices, dim=0):
@@ -79,7 +80,8 @@ def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
         # https://twitter.com/mrcslws/status/1589721597396815873
         return x.clamp(min=epsilon).log().sum(dim=dim).exp()
 
-core.eval_impls[p.fast_prod_positive_p] = fast_prod_positive_impl
+core.eval_impls[p.fast_prod_positive_p] = allow_listlike_arg0(
+    fast_prod_positive_impl)
 
 
 def fast_prod_positive_multi_impl(x, dim=None, epsilon=1e-10):

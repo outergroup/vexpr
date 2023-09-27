@@ -474,17 +474,24 @@ def push_stack_through_mul(expr, allow_partial=True):
                          if axis < 0
                          else -len(implicit_left_shape) + axis)
 
-    left = v._vectorize(vtorch.stack(left, **kwargs))
+    left = v._vectorize(v.with_return_shape(vtorch.stack(left, **kwargs),
+                                            actual_left_shape))
     if implicit_left_shape[implicit_neg_axis:] \
        != actual_left_shape[implicit_neg_axis:]:
-        left = vtorch.reshape(left, implicit_left_shape[implicit_neg_axis:])
+        shape = implicit_left_shape[implicit_neg_axis:]
+        left = v.with_return_shape(vtorch.reshape(left, shape),
+                                   shape)
 
-    right = v._vectorize(vtorch.stack(right, **kwargs))
+    right = v._vectorize(v.with_return_shape(vtorch.stack(right, **kwargs),
+                                             actual_right_shape))
     if implicit_right_shape[implicit_neg_axis:] \
        != actual_right_shape[implicit_neg_axis:]:
-        right = vtorch.reshape(right, implicit_right_shape[implicit_neg_axis:])
+        shape = implicit_right_shape[implicit_neg_axis:]
+        right = v.with_return_shape(vtorch.reshape(right, shape),
+                                    shape)
 
-    return left * right
+    return v.with_return_shape(left * right,
+                               v.shape(right))
 
 def push_cat_through_mul(expr, allow_partial=True):
     assert expr.op == p.cat_p
