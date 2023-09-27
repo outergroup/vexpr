@@ -174,7 +174,7 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
             grandchildren.append(split_and_stack_expr.args[0])
         else:
             grandchildren.append(child_expr)
-            lengths.append(v.shape(child_expr)[cat_dim])
+            lengths += [1] * v.shape(child_expr)[cat_dim]
 
     grandchildren = v._vectorize(vtorch.cat(grandchildren, dim=cat_dim))
     grandchildren = vctorch.split_and_stack(grandchildren,
