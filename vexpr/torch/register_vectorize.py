@@ -9,13 +9,14 @@ import vexpr.vectorization
 from vexpr.vectorization import _vectorize
 
 PRIORITIZED_OPS = set([
-    # Heuristic: Prioritize sums, products, and division.
+    p.stack_p, p.cat_p,
     p.sum_p, p.prod_p, core.operator_add_p,
     core.operator_mul_p, core.operator_truediv_p,
     core.operator_matmul_p,
     p.index_add_p, p.index_reduce_p,
     cp.index_add_into_zeros_p, cp.index_reduce_into_ones_p,
-    cp.sum_multi_p, cp.prod_multi_p,
+    cp.sum_multi_p, cp.prod_multi_p, cp.fast_prod_positive_p,
+    cp.fast_prod_positive_multi_p,
     cp.shuffle_p,
 ])
 
