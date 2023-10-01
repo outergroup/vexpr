@@ -123,7 +123,7 @@ This is an equivalent expression with fewer commands. It indexes into `x1` and `
 Now we perform partial evaluation on the expression.
 
 ```python
-inference_f = vp.partial_evaluate(f, dict(w1=0.75, w2=0.25))
+inference_f = vp.partial_eval(f, dict(w1=0.75, w2=0.25))
 print(inference_f.vexpr)
 ```
 
@@ -203,4 +203,4 @@ Writing Vexpr expressions is like using a programming language that doesn't supp
 
 Vexpr is designed to work alongside compilers like JAX's XLA compiler or pytorch's `torch.compile`. Vexpr's job is to compile your program down to an efficient set of numpy/pytorch/JAX operations, and then those frameworks' compilers go further.
 
-Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expressions are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_evaluate()` return new instances.
+Vexpr embraces functional programming, which makes it work automatically with `jax.vmap` and `torch.vmap`. Vexpr expressions are functions with no mutable state, and transformations like `expr.vectorize()` or `expr.partial_eval()` return new instances.
