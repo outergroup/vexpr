@@ -175,7 +175,7 @@ eval_impls.update({
 
 # this is essentially an alternate interpreter which only evaluates an operator
 # if its children can be evaluated, given the provided inputs.
-def partial_evaluate_(expr, context):
+def partial_eval_(expr, context):
     if not isinstance(expr, Vexpr):
         raise ValueError(expr)
 
@@ -189,13 +189,13 @@ def partial_evaluate_(expr, context):
         context2 = dict(context)
         for symbol, v in expr.args[0]:
             name = (symbol if isinstance(symbol, str) else symbol.args[0])
-            v = partial_evaluate_(v, context2)
+            v = partial_eval_(v, context2)
             if not isinstance(v, Vexpr):
                 context2[name] = v
-        return partial_evaluate_(expr.args[1], context2)
+        return partial_eval_(expr.args[1], context2)
     else:
         impl = eval_impls[expr.op]
-        args = evaluate_args(expr.args, context, partial_evaluate_)
+        args = evaluate_args(expr.args, context, partial_eval_)
 
         ready = True
         for arg in args:
@@ -253,19 +253,18 @@ def make_vexpr(f):
 
 def eval(expr, inputs, allow_partial=False):
     if allow_partial:
-        return partial_evaluate_(expr, inputs)
+        return partial_eval_(expr, inputs)
     else:
         return call(expr, inputs)
 
 
-
-def partial_evaluate(f, inputs):
+def partial_eval(f, inputs):
     """
     If all symbols are specified, the Vexpr is fully evaluated.
     """
     if isinstance(f, VexprCaller):
         f = f.clone()
-        f.vexpr = partial_evaluate_(f.vexpr, inputs)
+        f.vexpr = partial_eval_(f.vexpr, inputs)
         for name in inputs.keys():
             # Mimic behavior of functools.partial. Any arg after the first kwarg
             # can now only be specified as a kwarg.
@@ -276,6 +275,6 @@ def partial_evaluate(f, inputs):
                 pass
         return f
     elif isinstance(f, Vexpr):
-        return partial_evaluate_(f, inputs)
+        return partial_eval_(f, inputs)
     else:
         raise ValueError(f)

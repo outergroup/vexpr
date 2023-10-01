@@ -174,13 +174,28 @@ def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
     return result
 
 
-def vectorize(f):
-    if isinstance(f, core.VexprCaller):
-        f = f.clone()
-    elif isinstance(f, Vexpr):
-        f = core.VexprCaller(f, [])
-    else:
-        f = core.make_vexpr(f)
+def vectorize(f_or_expr, example_inputs=None):
+    if example_inputs is not None:
+        if isinstance(f_or_expr, Vexpr):
+            expr, result = traced_call(f_or_expr, example_inputs)
+            return strip_metadata(_vectorize(expr))
+        else:
+            if isinstance(f_or_expr, core.VexprCaller):
+                vexpr_caller = f_or_expr.clone()
+            else:
+                vexpr_caller = core.make_vexpr(f_or_expr)
 
-    f.alternate_calls.append(call_and_vectorize)
-    return f
+            expr, result = traced_call(vexpr_caller.vexpr, example_inputs)
+            vexpr_caller.vexpr = strip_metadata(_vectorize(expr))
+            return vexpr_caller
+    else:
+        # Lazily vectorize when inputs are provided
+        if isinstance(f_or_expr, core.VexprCaller):
+            vexpr_caller = f_or_expr.clone()
+        elif isinstance(f_or_expr, Vexpr):
+            vexpr_caller = core.VexprCaller(f_or_expr, [])
+        else:
+            vexpr_caller = core.make_vexpr(f_or_expr)
+
+        vexpr_caller.alternate_calls.append(call_and_vectorize)
+        return vexpr_caller
