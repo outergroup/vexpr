@@ -434,7 +434,8 @@ def push_stack_through_mul(expr, allow_partial=True):
             # we need to instead append, e.g., torch.ones((1, 1, 1)) when we're
             # weighting matrices, because these "ones" need to be able to
             # concatenate with other actual tensors of weights.
-            left.append(1.0)
+            left.append(v.with_return_shape(vtorch.ones(()),
+                                            ()))
             right.append(child_expr)
 
     kwargs = {}
