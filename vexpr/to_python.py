@@ -113,8 +113,6 @@ def to_python(expr):
 
     s_expression = to_list_of_strings([expr_without_data], name_for_op)[0]
     s_function = "def generated_func(symbols): return " + s_expression
-    print(provided_locals)
-    print(s_function)
     exec(s_function, provided_locals)
 
     return provided_locals["generated_func"]

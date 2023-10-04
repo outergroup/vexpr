@@ -11,6 +11,20 @@ from jax.tree_util import tree_map
 
 
 class TestVexprTorchTests(unittest.TestCase):
+    def test_to_python(self):
+        expr = vtorch.sum([vp.symbol("x1"), vp.symbol("x2")], dim=0)
+
+        f = vp.to_python(expr)
+
+        example_inputs = dict(
+            x1=torch.full((3, 3), 1.0),
+            x2=torch.full((3, 3), 2.0),
+        )
+
+        interpreted_result = vp.eval(expr, example_inputs)
+        python_result = f(example_inputs)
+        torch.testing.assert_close(interpreted_result, python_result)
+
     def test_sum_impl(self):
         example_inputs = dict(
             x1=torch.full((3, 3), 1.0),

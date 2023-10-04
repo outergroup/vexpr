@@ -131,7 +131,6 @@ print(inference_f.vexpr)
 numpy.sum(
   operator.mul(
     array([[[0.75]],
-    
            [[0.25]]]),
     custom.scipy.cdist_multi(
       operator.getitem(
