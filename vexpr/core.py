@@ -5,7 +5,6 @@ are built up directly by the user.
 """
 
 import inspect
-from functools import partial
 from pprint import pformat
 from typing import NamedTuple
 
