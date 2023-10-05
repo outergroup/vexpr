@@ -57,7 +57,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=4,
                 expanded_indices=torch.arange(4),
                 max_length=2,
-                dim=0,
+                split_dim=0,
+                stack_dim=0,
                 fill_value=0.,
             )
             return vctorch.sum_multi(
@@ -85,7 +86,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=4,
                 expanded_indices=torch.arange(4),
                 max_length=2,
-                dim=0,
+                split_dim=0,
+                stack_dim=0,
                 fill_value=1.,
             )
             return vctorch.prod_multi(
@@ -191,7 +193,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=6,
                 expanded_indices=torch.arange(6),
                 max_length=3,
-                dim=-1,
+                split_dim=-1,
+                stack_dim=0,
             )
             return scale * (
                 vtorch.sum(vctorch.cdist_multi(
@@ -235,17 +238,17 @@ class TestVexprTorchTests(unittest.TestCase):
                 )
 
             additive_kernel = vtorch.sum(dirichlet_w
-                                      * vtorch.stack([subkernel(indices1),
-                                                   subkernel(indices2),
-                                                   subkernel(indices3)],
-                                                  dim=-1),
-                                      dim=-1)
+                                         * vtorch.stack([subkernel(indices1),
+                                                         subkernel(indices2),
+                                                         subkernel(indices3)],
+                                                        dim=-1),
+                                         dim=-1)
             joint_kernel = subkernel(joint)
 
             return scale * vtorch.sum(beta_w *
-                                   vtorch.stack([additive_kernel,
-                                              joint_kernel], dim=-1),
-                                   dim=-1)
+                                      vtorch.stack([additive_kernel,
+                                                    joint_kernel], dim=-1),
+                                      dim=-1)
 
         @vp.make_vexpr
         def expected(x1, x2, scale, beta_w, dirichlet_w, lengthscale):
@@ -255,7 +258,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=6,
                 expanded_indices=torch.tensor([0, 1, 2, 3]),
                 max_length=3,
-                dim=-1,
+                split_dim=-1,
+                stack_dim=-1,
                 fill_value=0.,
             )
             split_stack_kwargs2 = dict(
@@ -263,13 +267,14 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=12,
                 expanded_indices=torch.tensor([0, 3, 6, 9, 10, 11]),
                 max_length=3,
-                dim=-1,
+                split_dim=-1,
+                stack_dim=-1,
             )
             return scale * vtorch.sum(
                 beta_w
                 * vctorch.sum_multi(
                     vctorch.split_and_stack(
-                        vtorch.scatter(vtorch.ones((4,)), -1, torch.tensor([0, 1, 2]),
+                        vtorch.scatter(vtorch.ones((4,)), 0, torch.tensor([0, 1, 2]),
                                        dirichlet_w)
                         * vctorch.cdist_multi(
                             vctorch.split_and_stack(x1[..., indices]
@@ -343,7 +348,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=4,
                 expanded_indices=torch.arange(4),
                 max_length=2,
-                dim=0,
+                split_dim=0,
+                stack_dim=0,
                 fill_value=0.,
             )
             return vctorch.sum_multi(
@@ -389,7 +395,8 @@ class TestVexprTorchTests(unittest.TestCase):
             expanded_length=6,
             expanded_indices=torch.arange(6),
             max_length=3,
-            dim=-1,
+            split_dim=-1,
+            stack_dim=0,
         )
 
         # print(f.vexpr)
@@ -398,30 +405,30 @@ class TestVexprTorchTests(unittest.TestCase):
             indices = torch.tensor([0, 1, 2, 0, 3, 4])
 
             return vtorch.sum(
-                vtorch.reshape(vtorch.stack([w1, w2]), (2, 1, 1))
-                * vctorch.cdist_multi(
-                    vctorch.split_and_stack(x1[..., indices],
-                                            **split_stack_kwargs),
-                    vctorch.split_and_stack(x2[..., indices],
-                                            **split_stack_kwargs),
-                    p=2),
-                dim=0)
-
-        import vexpr.core
-
-        @vp.make_vexpr
-        def expected_pe(x1, x2, w1, w2):
-            indices = torch.tensor([0, 1, 2, 0, 3, 4])
-            return vtorch.sum(
-                vexpr.core.operator_mul(
-                    torch.tensor([[[0.75]], [[0.25]]]),
+                vctorch.mul_along_dim(
+                    vtorch.stack([w1, w2]),
                     vctorch.cdist_multi(
                         vctorch.split_and_stack(x1[..., indices],
                                                 **split_stack_kwargs),
                         vctorch.split_and_stack(x2[..., indices],
                                                 **split_stack_kwargs),
-                        p=2)
-                ),
+                        p=2),
+                    dim=0),
+                dim=0)
+
+        @vp.make_vexpr
+        def expected_pe(x1, x2, w1, w2):
+            indices = torch.tensor([0, 1, 2, 0, 3, 4])
+            return vtorch.sum(
+                vctorch.mul_along_dim(
+                    torch.tensor([0.75, 0.25]),
+                    vctorch.cdist_multi(
+                        vctorch.split_and_stack(x1[..., indices],
+                                                **split_stack_kwargs),
+                        vctorch.split_and_stack(x2[..., indices],
+                                                **split_stack_kwargs),
+                        p=2),
+                    dim=0),
                 dim=0)
 
         example_inputs = dict(
@@ -502,7 +509,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=4,
                 expanded_indices=torch.arange(4),
                 max_length=2,
-                dim=-1,
+                split_dim=-1,
+                stack_dim=0,
             )
             return vtorch.cat([
                 matern(
@@ -555,7 +563,8 @@ class TestVexprTorchTests(unittest.TestCase):
                 expanded_length=4,
                 expanded_indices=torch.arange(4),
                 max_length=2,
-                dim=-1,
+                split_dim=-1,
+                stack_dim=0,
             )
             return vctorch.shuffle(
                 vtorch.cat([

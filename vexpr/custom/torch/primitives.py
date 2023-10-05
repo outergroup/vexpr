@@ -9,6 +9,9 @@ fast_prod_positive_multi_p, fast_prod_positive_multi = _p_and_constructor(
 sum_multi_p, sum_multi = _p_and_constructor("custom.torch.sum_multi")
 prod_multi_p, prod_multi = _p_and_constructor("custom.torch.prod_multi")
 
+mul_along_dim_p, mul_along_dim = _p_and_constructor(
+    "custom.torch.mul_along_dim")
+
 # calls index_add, sizing the return value according to the input value's shape
 # this is like doing a vtorch.index_add(vtorch.zeros(...), ...), but the shape
 # of the zeros is dynamically chosen.
@@ -26,6 +29,7 @@ __all__ = [
     "fast_prod_positive_multi",
     "sum_multi",
     "prod_multi",
+    "mul_along_dim",
     "index_add_into_zeros",
     "index_reduce_into_ones",
     "split_and_stack",

@@ -143,7 +143,8 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
     all_reduction_operands = vctorch.split_and_stack(all_reduction_operands,
                                                      **split_and_stack_kwargs(lengths),
                                                      fill_value=fill_value,
-                                                     dim=stack_axis)
+                                                     split_dim=stack_axis,
+                                                     stack_dim=stack_axis)
     result = parallel_reduction(all_reduction_operands, dim=stack_axis)
 
     child_shape = next(v.shape(expr) for expr in exprs_to_stack

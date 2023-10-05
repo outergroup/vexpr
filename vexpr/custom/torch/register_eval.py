@@ -15,7 +15,7 @@ core.eval_impls[p.shuffle_p] = shuffle_impl
 
 
 def split_and_stack_impl(x, lengths, expanded_length, expanded_indices,
-                         max_length, fill_value=0., dim=0):
+                         max_length, fill_value=0., split_dim=0, stack_dim=0):
     """
     Technically, this function receives redundant information. It receives
     the list of lengths because this makes it easier for the vectorizer to
@@ -23,34 +23,53 @@ def split_and_stack_impl(x, lengths, expanded_length, expanded_indices,
     the lengths from the expanded_indices.
     """
     with torch.profiler.record_function("split_and_stack"):
-        if dim < 0:
-            dim += len(x.shape)
+        if split_dim < 0:
+            split_dim += len(x.shape)
+        if stack_dim < 0:
+            stack_dim += len(x.shape)
 
-        final_shape = (*x.shape[:dim], len(lengths),
-                       max_length,
-                       *x.shape[dim + 1:])
+        shape_after_expand = (*x.shape[:split_dim], len(lengths),
+                              max_length,
+                              *x.shape[split_dim + 1:])
 
-        if expanded_length == x.shape[dim]:
+        if expanded_length == x.shape[split_dim]:
             # no expansion needed
-            return x.view(final_shape)
+            x_expanded = x.view(shape_after_expand)
+        else:
+            expanded_shape = (*x.shape[:split_dim], expanded_length,
+                              *x.shape[split_dim + 1:])
 
-        expanded_shape = (*x.shape[:dim], expanded_length,
-                          *x.shape[dim + 1:])
+            x_expanded = x.new_full(expanded_shape, fill_value)
+            selection = [slice(None)] * len(expanded_shape)
+            selection[split_dim] = expanded_indices
+            selection = tuple(selection)
+            x_expanded[selection] = x
 
-        x_expanded = x.new_full(expanded_shape, fill_value)
-        selection = [slice(None)] * len(expanded_shape)
-        selection[dim] = expanded_indices
-        selection = tuple(selection)
-        x_expanded[selection] = x
-        return x_expanded.view(final_shape)
+            x_expanded = x_expanded.view(shape_after_expand)
+
+        if split_dim == stack_dim:
+            return x_expanded
+        else:
+            # equivalent of x_expanded.moveaxis(-2, stack_dim), but with
+            # permute. moveaxis is not supported with vmap, as of Pytorch 2.1.
+            order = list(range(x_expanded.ndim))
+            negative_index = -2 % x_expanded.ndim
+            order.pop(negative_index)
+            order.insert(stack_dim, negative_index)
+            return x_expanded.permute(tuple(order))
 
 core.eval_impls[p.split_and_stack_p] = split_and_stack_impl
 
 
 def cdist_multi_impl(x1, x2, p, dim=0):
     with torch.profiler.record_function("cdist_multi"):
-        f = torch.vmap(torch.cdist, in_dims=(-2, -2), out_dims=dim)
-        return f(x1, x2, p=p)
+        if dim == 0:
+            return torch.cdist(x1, x2, p=p)
+        elif dim == -1:
+            f = torch.vmap(torch.cdist, in_dims=(-2, -2), out_dims=dim)
+            return f(x1, x2, p=p)
+        else:
+            raise NotImplementedError()
 
 core.eval_impls[p.cdist_multi_p] = cdist_multi_impl
 
@@ -119,6 +138,15 @@ def prod_multi_impl(x, dim=None):
         return f(x, dim=dim)
 
 core.eval_impls[p.prod_multi_p] = prod_multi_impl
+
+
+def mul_along_dim_impl(w, t, dim=0):
+    new_shape = [1] * t.dim()
+    new_shape[dim] = len(w)
+    return w.view(new_shape) * t
+
+core.eval_impls[p.mul_along_dim_p] = mul_along_dim_impl
+
 
 def index_add_into_zeros_impl(n_sums, dim, index, source, *args, **kwargs):
     with torch.profiler.record_function("index_add_into_zeros"):

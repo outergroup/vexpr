@@ -171,7 +171,8 @@ def push_cat_through_zeros_ones(zeros_ones_p, zeros_ones,
     dim = expr.kwargs.get("dim", 0)
     child_shapes = [child_expr.args[0] for child_expr in expr.args[0]]
     result_shape = torch_cat_shape(child_shapes, dim)
-    return zeros_ones(result_shape)
+    return v.with_return_shape(zeros_ones(result_shape),
+                               result_shape)
 
 v.pushthrough_impls.update({
     (p.cat_p, p.zeros_p): partial(push_cat_through_zeros_ones, p.zeros_p,
@@ -417,91 +418,67 @@ def push_stack_through_mul(expr, allow_partial=True):
 
     left = []
     right = []
-    for child_expr in expr.args[0]:
+    identity = False
+    actual_indices = []
+    for i, child_expr in enumerate(expr.args[0]):
         if isinstance(child_expr, vp.Vexpr) and child_expr.op == core.operator_mul_p:
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
+            actual_indices.append(i)
         else:
-            # TODO: how to choose side? for example, some users do w * matrix,
-            # while others do matrix * w. Here I want to append the 1 to the w.
-            # It seems the way to do this is to check which symbols each
-            # child_expr is derived from, then when we're doing an identity, use
-            # the symbols *this* child_expr is derived from. if they aren't
-            # derived from the same symbols, then there's no benefit to choosing
-            # correctly.
-            #
-            # TODO: what if we're multiplying matrices with matrices? sometimes
-            # we need to instead append, e.g., torch.ones((1, 1, 1)) when we're
-            # weighting matrices, because these "ones" need to be able to
-            # concatenate with other actual tensors of weights.
-            left.append(v.with_return_shape(vtorch.ones(()),
-                                            ()))
+            # TODO this is making lots of assumptions
+            identity = True
             right.append(child_expr)
 
     kwargs = {}
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
 
-    # decide whether ones need to be inserted into the shape to get proper
-    # broadcasting
-    left_shapes = [v.shape(child_expr) for child_expr in left]
-    left_shape_before_stack = left_shapes[0]
-    assert all(left_shape_before_stack == shape for shape in left_shapes)
-    right_shapes = [v.shape(child_expr) for child_expr in right]
-    right_shape_before_stack = right_shapes[0]
-    assert all(right_shape_before_stack == shape for shape in right_shapes)
-    discrepancy = len(right_shape_before_stack) - len(left_shape_before_stack)
-    if discrepancy == 0:
-        implicit_left_shape = left_shape_before_stack
-        implicit_right_shape = right_shape_before_stack
-    elif discrepancy > 0:
-        implicit_left_shape = left_shape_before_stack + (1,) * discrepancy
-        implicit_right_shape = right_shape_before_stack
+    left = v._vectorize(
+        v.with_return_shape(
+            vtorch.stack(left, **kwargs),
+            torch_stack_shape2([v.shape(d) for d in left],
+                               **expr.kwargs)))
+
+    if identity:
+        ones_shape = (len(expr.args[0]),)
+        left = v.with_return_shape(
+            vtorch.scatter(
+                v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
+                0,
+                torch.tensor(actual_indices),
+                left),
+            ones_shape)
+
+    right = v._vectorize(
+        v.with_return_shape(
+            vtorch.stack(right, **kwargs),
+            torch_stack_shape2([v.shape(d) for d in right],
+                               **expr.kwargs)))
+
+    dim = expr.kwargs.get("dim", 0)
+    ndim = len(v.shape(right))
+    if canonical_axis(dim, ndim) == ndim - 1:
+        ret = left * right
     else:
-        implicit_left_shape = left_shape_before_stack
-        implicit_right_shape = right_shape_before_stack + (1,) * -discrepancy
+        ret = vctorch.mul_along_dim(left, right, dim=dim)
 
-    axis = expr.kwargs.get("dim", 0)
-    actual_left_shape = torch_stack_shape(left_shape_before_stack,
-                                          len(left), axis)
-    actual_right_shape = torch_stack_shape(right_shape_before_stack,
-                                           len(right), axis)
-    implicit_left_shape = torch_stack_shape(implicit_left_shape,
-                                            len(left), axis)
-    implicit_right_shape = torch_stack_shape(implicit_right_shape,
-                                             len(right), axis)
+    return v.with_return_shape(ret, v.shape(right))
 
-    implicit_neg_axis = (axis
-                         if axis < 0
-                         else -len(implicit_left_shape) + axis)
-
-    left = v._vectorize(v.with_return_shape(vtorch.stack(left, **kwargs),
-                                            actual_left_shape))
-    if implicit_left_shape[implicit_neg_axis:] \
-       != actual_left_shape[implicit_neg_axis:]:
-        shape = implicit_left_shape[implicit_neg_axis:]
-        left = v.with_return_shape(vtorch.reshape(left, shape),
-                                   shape)
-
-    right = v._vectorize(v.with_return_shape(vtorch.stack(right, **kwargs),
-                                             actual_right_shape))
-    if implicit_right_shape[implicit_neg_axis:] \
-       != actual_right_shape[implicit_neg_axis:]:
-        shape = implicit_right_shape[implicit_neg_axis:]
-        right = v.with_return_shape(vtorch.reshape(right, shape),
-                                    shape)
-
-    return v.with_return_shape(left * right,
-                               v.shape(right))
 
 def push_cat_through_mul(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
     dim = expr.kwargs.get("dim", 0)
-
     child_shapes = [v.shape(child_expr) for child_expr in expr.args[0]]
     ndim = len(child_shapes[0])
-    ndim_identity_broadcast = ndim - canonical_axis(dim, ndim) - 1
+
+    if canonical_axis(dim, ndim) != ndim - 1:
+        raise NotImplementedError(
+            "With Vexpr vectorize, don't use vector-tensor elementwise multiplication. "
+            "Instead, use vexpr.custom.torch.mul_along_dim, which states your "
+            "intent more clearly and is hence much easier to vectorize."
+        )
 
     left = []
     right = []
@@ -521,19 +498,27 @@ def push_cat_through_mul(expr, allow_partial=True):
         base += n
     total_n = base
 
-    left = v._vectorize(vtorch.cat(left, dim=dim))
+    left_shapes = [v.shape(child_expr) for child_expr in left]
+
+    left = v._vectorize(v.with_return_shape(vtorch.cat(left, dim=dim),
+                                            torch_cat_shape(left_shapes,
+                                                            dim=dim)))
     if identity:
-        ones_shape = (total_n,) + (1,) * ndim_identity_broadcast
+        ones_shape = (total_n,)
         left = v.with_return_shape(
             vtorch.scatter(
                 v.with_return_shape(vtorch.ones(ones_shape),
                                     ones_shape),
-                dim,
+                0,
                 torch.tensor(actual_indices),
                 left),
             ones_shape)
 
-    right = v._vectorize(vtorch.cat(right, dim=dim))
+    right_shapes = [v.shape(child_expr) for child_expr in right]
+
+    right = v._vectorize(v.with_return_shape(vtorch.cat(right, dim=dim),
+                                             torch_cat_shape(right_shapes,
+                                                             dim=dim)))
 
     return v.with_return_shape(left * right, torch_cat_shape(child_shapes,
                                                              dim=dim))
@@ -552,7 +537,8 @@ def push_cat_through_scatter(expr, allow_partial):
         if not isinstance(child_expr, vp.Vexpr) or child_expr.op != p.scatter_p:
             raise NotImplementedError()
 
-        assert child_expr.args[1] == dim
+        ndim = len(v.shape(child_expr))
+        assert canonical_axis(child_expr.args[1], ndim) == canonical_axis(dim, ndim)
 
         into.append(child_expr.args[0])
         indices.append(base + child_expr.args[2])
@@ -562,11 +548,14 @@ def push_cat_through_scatter(expr, allow_partial):
 
     into_shape = torch_cat_shape([v.shape(into_expr) for into_expr in into],
                                  dim=dim)
+    source_shape = torch_cat_shape([v.shape(source_expr) for source_expr in sources],
+                                   dim=dim)
 
-    into = v.with_return_shape(v._vectorize(vtorch.cat(into, dim=dim)),
-                               into_shape)
-    indices = torch.cat(indices)
-    sources = v._vectorize(vtorch.cat(sources, dim=dim))
+    into = v._vectorize(v.with_return_shape(vtorch.cat(into, dim=dim),
+                                            into_shape))
+    sources = v._vectorize(v.with_return_shape(vtorch.cat(sources, dim=dim),
+                                               source_shape))
+    indices = torch.cat(indices).view(v.shape(sources))
     return v.with_return_shape(vtorch.scatter(into, dim, indices, sources),
                                into_shape)
 
@@ -609,8 +598,7 @@ def push_stack_through_cdist(expr, allow_partial=True):
                   for child_expr in expr.args[0]
                   if child_expr.op == p.cdist_p)
 
-    # TODO process this
-    stack_axis = expr.kwargs.get("dim", 0)
+    stack_dim = expr.kwargs.get("dim", 0)
 
     left = []
     right = []
@@ -637,8 +625,10 @@ def push_stack_through_cdist(expr, allow_partial=True):
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
     expansion_kwargs = split_and_stack_kwargs(lengths)
-    left = vctorch.split_and_stack(left, **expansion_kwargs, dim=-1)
-    right = vctorch.split_and_stack(right, **expansion_kwargs, dim=-1)
+    left = vctorch.split_and_stack(left, **expansion_kwargs, split_dim=-1,
+                                   stack_dim=stack_dim)
+    right = vctorch.split_and_stack(right, **expansion_kwargs, split_dim=-1,
+                                    stack_dim=stack_dim)
 
     kwargs = dict(p=metric)
     kwargs["p"] = metric

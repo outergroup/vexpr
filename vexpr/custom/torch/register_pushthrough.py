@@ -73,16 +73,20 @@ def combine_split_and_stack(exprs, dim=0):
     lengths = []
     children = []
     for expr in exprs:
-        assert expr.op == csp_p.split_and_stack_p
         lengths += expr.kwargs["lengths"]
         children.append(expr.args[0])
+
+    stack_dim = exprs[0].kwargs["stack_dim"]
+    split_dim = exprs[0].kwargs["split_dim"]
+    assert split_dim == dim
 
     children = v._vectorize(vtorch.cat(children, dim=dim))
 
     return vctorch.split_and_stack(
         children,
         **split_and_stack_kwargs(lengths),
-        dim=dim,
+        split_dim=split_dim,
+        stack_dim=stack_dim
     )
 
 
@@ -180,7 +184,8 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
     grandchildren = vctorch.split_and_stack(grandchildren,
                                             **split_and_stack_kwargs(lengths),
                                             fill_value=fill_value,
-                                            dim=reduction_dim)
+                                            split_dim=reduction_dim,
+                                            stack_dim=reduction_dim)
 
     return v.with_return_shape(parallel_reduction(grandchildren,
                                                   dim=reduction_dim),
@@ -199,6 +204,64 @@ v.pushthrough_impls.update({
     (p.stack_p, csp_p.fast_prod_positive_p): partial(
         push_stack_through_reduction, csp_p.fast_prod_positive_p,
         vctorch.fast_prod_positive_multi, 1.)
+})
+
+
+def push_cat_through_mul_along_dim(expr, allow_partial=True):
+    assert expr.op == p.cat_p
+
+    cat_dim = expr.kwargs.get("dim", 0)
+
+    mul_along_dim_dims = [child_expr.kwargs.get("dim", None)
+                          for child_expr in expr.args[0]
+                          if isinstance(child_expr, vp.Vexpr)
+                          and child_expr.op == csp_p.mul_along_dim_p]
+    assert all(dim == mul_along_dim_dims[0] for dim in mul_along_dim_dims)
+    mul_along_dim_dim = mul_along_dim_dims[0]
+
+    w = []
+    t = []
+    base = 0
+    actual_indices = []
+    identity = False
+    for child_expr in expr.args[0]:
+        n = v.shape(child_expr)[cat_dim]
+        if isinstance(child_expr, vp.Vexpr) \
+           and child_expr.op == csp_p.mul_along_dim_p:
+            w.append(child_expr.args[0])
+            t.append(child_expr.args[1])
+            actual_indices += list(range(base, base + n))
+        else:
+            t.append(child_expr)
+            identity = True
+        base += n
+    total_n = base
+
+    w_shapes = [v.shape(w_expr) for w_expr in w]
+    w = v._vectorize(v.with_return_shape(vtorch.cat(w, dim=cat_dim),
+                                            torch_cat_shape(w_shapes,
+                                                            dim=cat_dim)))
+    if identity:
+        ones_shape = (total_n,)
+        w = v.with_return_shape(
+            vtorch.scatter(
+                v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
+                0,
+                torch.tensor(actual_indices),
+                w),
+            ones_shape)
+
+    t_shapes = [v.shape(t_expr) for t_expr in t]
+    t = v._vectorize(v.with_return_shape(vtorch.cat(t, dim=cat_dim),
+                                         torch_cat_shape(t_shapes,
+                                                         dim=cat_dim)))
+
+    return v.with_return_shape(
+        vctorch.mul_along_dim(w, t, dim=mul_along_dim_dim),
+        v.shape(t))
+
+v.pushthrough_impls.update({
+    (p.cat_p, csp_p.mul_along_dim_p): push_cat_through_mul_along_dim
 })
 
 

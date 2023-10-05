@@ -16,7 +16,7 @@ PRIORITIZED_OPS = set([
     p.index_add_p, p.index_reduce_p,
     cp.index_add_into_zeros_p, cp.index_reduce_into_ones_p,
     cp.sum_multi_p, cp.prod_multi_p, cp.fast_prod_positive_p,
-    cp.fast_prod_positive_multi_p,
+    cp.fast_prod_positive_multi_p, cp.mul_along_dim,
     cp.shuffle_p,
 ])
 
