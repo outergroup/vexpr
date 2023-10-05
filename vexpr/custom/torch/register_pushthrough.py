@@ -326,9 +326,11 @@ v.pushthrough_impls.update({
 def push_concat_through_heads_tails(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
-    assert all(isinstance(child_expr, vp.Vexpr)
+    if not all(isinstance(child_expr, vp.Vexpr)
                and child_expr.op == csp_p.heads_tails_p
-               for child_expr in expr.args[0])
+               for child_expr in expr.args[0]):
+        print("Warning: giving up on pushing concat through heads_tails")
+        return expr
 
     if len(expr.args[0]) == 1:
         return v._vectorize(expr.args[0][0])
