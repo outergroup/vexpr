@@ -1,3 +1,4 @@
+import collections
 from functools import partial
 
 import torch
@@ -12,6 +13,7 @@ from vexpr.custom.torch.utils import (
     split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
+    invert_shuffle,
     torch_cat_shape,
     torch_stack_shape,
     cat_remainder_then_combine,
@@ -93,15 +95,22 @@ def combine_split_and_stack(exprs, dim=0):
 def push_cat_through_cdist_multi(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
-    metric = next(child_expr.kwargs.get("p", 2)
-                  for child_expr in expr.args[0]
-                  if child_expr.op == csp_p.cdist_multi_p)
-
     cat_dim = expr.kwargs.get("dim", 0)
+
+    all_groups = [child_expr.kwargs["groups"]
+                  for child_expr in expr.args[0]
+                  if child_expr.op == csp_p.cdist_multi_p]
+
+    groups = collections.Counter()
+    for group in all_groups:
+        groups.update(collections.Counter(dict(group)))
+    groups = list(groups.items())
 
     left = []
     right = []
-    axes = []
+
+    child_pre_shuffles = []
+    child_post_shuffles = []
 
     applicable_exprs = []
     applicable_indices = []
@@ -111,13 +120,13 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     for child_expr in expr.args[0]:
         num_indices = v.shape(child_expr)[cat_dim]
         result_indices = list(range(base, base + num_indices))
-        if (child_expr.op == csp_p.cdist_multi_p
-            and child_expr.kwargs.get("p", 2) == metric):
+        if child_expr.op == csp_p.cdist_multi_p:
             applicable_indices += result_indices
             applicable_exprs.append(child_expr)
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
-            axes.append(child_expr.kwargs.get("dim", None))
+            child_pre_shuffles.append(child_expr.kwargs["pre_shuffle_indices"])
+            child_post_shuffles.append(child_expr.kwargs["post_shuffle_indices"])
         else:
             if not allow_partial:
                 raise v.CannotVectorize()
@@ -125,19 +134,85 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
             remainder.append(child_expr)
         base += num_indices
 
-    canonicalized_axes = [(axis if axis is not None else 0)
-                          for axis in axes]
-    if not all(axis == canonicalized_axes[0]
-               for axis in canonicalized_axes[1:]):
-        raise ValueError("Expected same axes", axes)
-    axis = axes[0]
+    left = v._vectorize(vtorch.cat(left, dim=-1))
+    right = v._vectorize(vtorch.cat(right, dim=-1))
 
-    left = combine_split_and_stack(left, dim=-1)
-    right = combine_split_and_stack(right, dim=-1)
+    pre_shuffle_indices = []
+    post_shuffle_indices_inverted = []
+    for (length, metric), count in groups:
+        base = 0
+        i = 0
+        n_found = 0
+        for child_groups in all_groups:
+            for (length2, metric2), count2 in child_groups:
+                group_length = length2 * count2
+                if length2 == length and metric2 == metric:
+                    pre_shuffle_indices += list(range(base, base + group_length))
+                    post_shuffle_indices_inverted += list(range(i, i + count2))
+                    n_found += group_length
+                base += group_length
+                i += count2
+        assert n_found == length * count
+    assert i == sum(count for _, count in groups)
 
-    kwargs = dict(p=metric)
-    if axis is not None:
-        kwargs["dim"] = axis
+    pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
+    post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
+
+    # Incorporate the previous shuffles
+    if any(indices is not None for indices in child_pre_shuffles):
+        all_child_pre_shuffle_indices = []
+        base = 0
+        for child_groups, shuffle_indices in zip(all_groups,
+                                                 child_pre_shuffles):
+            num_elements = sum(length * count
+                               for (length, _), count in child_groups)
+            if shuffle_indices is None:
+                shuffle_indices = torch.arange(base, base + num_elements)
+            else:
+                shuffle_indices += base
+            base += num_elements
+            all_child_pre_shuffle_indices.append(shuffle_indices)
+        all_child_pre_shuffle_indices = torch.cat(all_child_pre_shuffle_indices)
+
+        if pre_shuffle_indices is None:
+            pre_shuffle_indices = all_child_pre_shuffle_indices
+        else:
+            pre_shuffle_indices = all_child_pre_shuffle_indices[pre_shuffle_indices]
+
+    if any(indices is not None for indices in child_post_shuffles):
+        all_child_post_shuffle_indices = []
+        base = 0
+        for child_groups, shuffle_indices in zip(all_groups,
+                                                 child_post_shuffles):
+            num_elements = sum(count
+                               for _, count in child_groups)
+            if shuffle_indices is None:
+                shuffle_indices = torch.arange(base, base + num_elements)
+            else:
+                shuffle_indices += base
+            base += num_elements
+            all_child_post_shuffle_indices.append(shuffle_indices)
+        all_child_post_shuffle_indices = torch.cat(all_child_post_shuffle_indices)
+
+        if post_shuffle_indices is None:
+            post_shuffle_indices = all_child_post_shuffle_indices
+        else:
+            post_shuffle_indices = post_shuffle_indices[all_child_post_shuffle_indices]
+
+    if torch.equal(pre_shuffle_indices, torch.arange(len(pre_shuffle_indices))):
+        pre_shuffle_indices = None
+
+    if torch.equal(post_shuffle_indices,
+                   torch.arange(len(post_shuffle_indices))):
+        post_shuffle_indices = None
+
+    kwargs = dict(
+        groups = groups,
+        pre_shuffle_indices=pre_shuffle_indices,
+        post_shuffle_indices=post_shuffle_indices,
+    )
+    if "dim" in expr.kwargs:
+        kwargs["stack_dim"] = expr.kwargs["dim"]
 
     return cat_remainder_then_combine(
         v.with_return_shape(

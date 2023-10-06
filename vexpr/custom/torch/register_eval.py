@@ -102,15 +102,34 @@ def split_and_stack_impl(x, lengths, expanded_length, expanded_indices,
 core.eval_impls[p.split_and_stack_p] = split_and_stack_impl
 
 
-def cdist_multi_impl(x1, x2, p, dim=0):
+def cdist_multi_impl(x1, x2, groups, pre_shuffle_indices=None,
+                     post_shuffle_indices=None, stack_dim=0):
     with torch.profiler.record_function("cdist_multi"):
-        if dim == 0:
-            return torch.cdist(x1, x2, p=p)
-        elif dim == -1:
-            f = torch.vmap(torch.cdist, in_dims=(-2, -2), out_dims=dim)
-            return f(x1, x2, p=p)
+        if pre_shuffle_indices is not None:
+            x1 = x1.index_select(-1, pre_shuffle_indices)
+            x2 = x2.index_select(-1, pre_shuffle_indices)
+
+        if stack_dim >= 0:
+            batch_dim = stack_dim
         else:
-            raise NotImplementedError()
+            batch_dim = len(x1.shape[:-2]) + stack_dim + 1
+
+        ret = []
+        splits = [d * n for (d, p), n in groups]
+        for ((d, metric), n), x1_, x2_ in zip(groups,
+                                              x1.split(splits, dim=-1),
+                                              x2.split(splits, dim=-1)):
+            x1_ = x1_.view(x1_.shape[:-1] + (n, d)).movedim(-2, batch_dim)
+            x2_ = x2_.view(x2_.shape[:-1] + (n, d)).movedim(-2, batch_dim)
+            ret.append(torch.cdist(x1_, x2_, p=metric))
+
+        ret = torch.cat(ret, dim=stack_dim)
+
+        if post_shuffle_indices is not None:
+            ret = ret.index_select(stack_dim, post_shuffle_indices)
+
+        return ret
+
 
 core.eval_impls[p.cdist_multi_p] = cdist_multi_impl
 

@@ -1,3 +1,4 @@
+import collections
 from functools import partial
 
 import torch
@@ -14,6 +15,7 @@ from vexpr.custom.torch.utils import (
     split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
+    invert_shuffle,
     torch_cat_shape,
     torch_stack_shape,
     torch_stack_shape2,
@@ -594,15 +596,12 @@ v.pushthrough_impls.update({
 def push_stack_through_cdist(expr, allow_partial=True):
     assert expr.op == p.stack_p
 
-    metric = next(child_expr.kwargs.get("p", 2)
-                  for child_expr in expr.args[0]
-                  if child_expr.op == p.cdist_p)
-
     stack_dim = expr.kwargs.get("dim", 0)
 
     left = []
     right = []
     lengths = []
+    ps = []
     child_matrix_shapes = []
 
     applicable_indices = []
@@ -610,12 +609,12 @@ def push_stack_through_cdist(expr, allow_partial=True):
     remainder_indices = []
 
     for i, child_expr in enumerate(expr.args[0]):
-        if (child_expr.op == p.cdist_p
-            and child_expr.kwargs.get("p", 2) == metric):
+        if child_expr.op == p.cdist_p:
             applicable_indices.append(i)
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
             lengths.append(v.shape(child_expr.args[0])[-1])
+            ps.append(child_expr.kwargs.get("p", 2))
             child_matrix_shapes.append(v.shape(child_expr))
         else:
             remainder.append(child_expr)
@@ -624,15 +623,34 @@ def push_stack_through_cdist(expr, allow_partial=True):
     left = v._vectorize(vtorch.cat(left, dim=-1))
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
-    expansion_kwargs = split_and_stack_kwargs(lengths, split_dim=-1,
-                                              stack_dim=stack_dim)
-    left = vctorch.split_and_stack(left, **expansion_kwargs)
-    right = vctorch.split_and_stack(right, **expansion_kwargs)
+    groups = list(collections.Counter(zip(lengths, ps)).items())
 
-    kwargs = dict(p=metric)
-    kwargs["p"] = metric
+    pre_shuffle_indices = []
+    post_shuffle_indices_inverted = []
+    for (length, metric), count in groups:
+        base = 0
+        for i, (length2, metric2) in enumerate(zip(lengths, ps)):
+            if length2 == length and metric2 == metric:
+                pre_shuffle_indices += list(range(base, base + length))
+                post_shuffle_indices_inverted.append(i)
+            base += length2
+
+    pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
+    if torch.equal(pre_shuffle_indices, torch.arange(len(pre_shuffle_indices))):
+        pre_shuffle_indices = None
+
+    post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
+    if torch.equal(post_shuffle_indices,
+                   torch.arange(len(post_shuffle_indices))):
+        post_shuffle_indices = None
+
+    kwargs = dict(
+        groups = groups,
+        pre_shuffle_indices=pre_shuffle_indices,
+        post_shuffle_indices=post_shuffle_indices,
+    )
     if "dim" in expr.kwargs:
-        kwargs["dim"] = expr.kwargs["dim"]
+        kwargs["stack_dim"] = expr.kwargs["dim"]
 
     # Compute shape of result
     child_matrix_shape = child_matrix_shapes[0]
@@ -649,9 +667,7 @@ def push_stack_through_cdist(expr, allow_partial=True):
         result_shape)
 
     return stack_remainder_then_combine(
-        v.with_return_shape(
-            vctorch.cdist_multi(left, right, **kwargs),
-            result_shape),
+        applicable,
         remainder,
         applicable_indices,
         remainder_indices,
