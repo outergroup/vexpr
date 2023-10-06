@@ -84,9 +84,9 @@ def combine_split_and_stack(exprs, dim=0):
 
     return vctorch.split_and_stack(
         children,
-        **split_and_stack_kwargs(lengths),
-        split_dim=split_dim,
-        stack_dim=stack_dim
+        **split_and_stack_kwargs(lengths,
+                                 split_dim=split_dim,
+                                 stack_dim=stack_dim)
     )
 
 
@@ -182,10 +182,11 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
 
     grandchildren = v._vectorize(vtorch.cat(grandchildren, dim=cat_dim))
     grandchildren = vctorch.split_and_stack(grandchildren,
-                                            **split_and_stack_kwargs(lengths),
-                                            fill_value=fill_value,
-                                            split_dim=reduction_dim,
-                                            stack_dim=reduction_dim)
+                                            **split_and_stack_kwargs(
+                                                lengths,
+                                                split_dim=reduction_dim,
+                                                stack_dim=reduction_dim),
+                                            fill_value=fill_value)
 
     return v.with_return_shape(parallel_reduction(grandchildren,
                                                   dim=reduction_dim),

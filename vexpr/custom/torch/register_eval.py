@@ -2,6 +2,7 @@ import torch
 
 from vexpr import core
 from vexpr.torch.register_eval import allow_listlike_arg0
+from vexpr.torch.utils import torch_stack_shape
 from . import primitives as p
 
 def shuffle_impl(arr, indices, dim=0):
@@ -12,6 +13,46 @@ def shuffle_impl(arr, indices, dim=0):
 
 core.eval_impls[p.shuffle_p] = shuffle_impl
 
+
+def split_and_stack_impl2(x, lengths, stack_dim_indices,
+                          split_dim_indices, max_length, fill_value=0.,
+                          split_dim=-1, stack_dim=0):
+    """
+    Technically, this function receives redundant information. It receives
+    the list of lengths because this makes it easier for the vectorizer to
+    concatenate calls to split_and_pad, so that it doesn't have to reconstruct
+    the lengths from the expanded_indices.
+    """
+    with torch.profiler.record_function("split_and_stack"):
+        shape = list(x.shape)
+        shape[split_dim] = max_length
+        shape = torch_stack_shape(shape, len(lengths), stack_dim)
+
+        stack_dim_after_stack = stack_dim
+        if stack_dim_after_stack < 0:
+            stack_dim_after_stack += len(shape)
+
+        if split_dim < 0:
+            split_dim += len(x.shape)
+        split_dim_after_stack = (split_dim + 1
+                                 if split_dim >= stack_dim_after_stack
+                                 else split_dim)
+
+        selection = [slice(None)] * len(shape)
+        selection[stack_dim_after_stack] = stack_dim_indices
+        selection[split_dim_after_stack] = split_dim_indices
+
+        if stack_dim_after_stack < split_dim_after_stack:
+            order = list(range(x.ndim))
+            order.pop(split_dim)
+            order.insert(stack_dim, split_dim)
+            x = x.permute(order)
+
+        ret = x.new_full(shape, fill_value)
+        # TODO: this line doesn't seem to work when running inside a vmap. Try
+        # using index_put_ instead, with proper broadcasting.
+        ret[selection] = x
+        return ret
 
 
 def split_and_stack_impl(x, lengths, expanded_length, expanded_indices,

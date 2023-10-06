@@ -624,11 +624,10 @@ def push_stack_through_cdist(expr, allow_partial=True):
     left = v._vectorize(vtorch.cat(left, dim=-1))
     right = v._vectorize(vtorch.cat(right, dim=-1))
 
-    expansion_kwargs = split_and_stack_kwargs(lengths)
-    left = vctorch.split_and_stack(left, **expansion_kwargs, split_dim=-1,
-                                   stack_dim=stack_dim)
-    right = vctorch.split_and_stack(right, **expansion_kwargs, split_dim=-1,
-                                    stack_dim=stack_dim)
+    expansion_kwargs = split_and_stack_kwargs(lengths, split_dim=-1,
+                                              stack_dim=stack_dim)
+    left = vctorch.split_and_stack(left, **expansion_kwargs)
+    right = vctorch.split_and_stack(right, **expansion_kwargs)
 
     kwargs = dict(p=metric)
     kwargs["p"] = metric

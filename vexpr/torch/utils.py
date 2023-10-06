@@ -10,7 +10,9 @@ from vexpr.custom.torch.utils import split_and_stack_kwargs
 def torch_stack_shape(initial_shape, num_elements, dim=0):
     if dim < 0:
         dim += len(initial_shape) + 1
-    return initial_shape[:dim] + (num_elements,) + initial_shape[dim:]
+    return (initial_shape[:dim]
+            + type(initial_shape)([num_elements,])
+            + initial_shape[dim:])
 
 
 def torch_stack_shape2(shapes, dim=0):
@@ -141,10 +143,11 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
     all_reduction_operands = v._vectorize(vtorch.cat(all_reduction_operands,
                                                      dim=stack_axis))
     all_reduction_operands = vctorch.split_and_stack(all_reduction_operands,
-                                                     **split_and_stack_kwargs(lengths),
-                                                     fill_value=fill_value,
-                                                     split_dim=stack_axis,
-                                                     stack_dim=stack_axis)
+                                                     **split_and_stack_kwargs(
+                                                         lengths,
+                                                         split_dim=stack_axis,
+                                                         stack_dim=stack_axis),
+                                                     fill_value=fill_value)
     result = parallel_reduction(all_reduction_operands, dim=stack_axis)
 
     child_shape = next(v.shape(expr) for expr in exprs_to_stack
