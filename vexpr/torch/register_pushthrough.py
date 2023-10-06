@@ -33,8 +33,71 @@ def canonical_axis(axis, ndim):
     else:
         return axis
 
+
+def push_cat_through_index_select(expr, allow_partial=True):
+    assert expr.op == p.cat_p
+
+    # Quick hacky assumptions: every child expr is selecting from a symbol, and
+    # they are the same symbol.
+    if not all(sub_expr.op == p.index_select_p
+               for sub_expr in expr.args[0]):
+        raise NotImplementedError()
+
+    select_targets = [sub_expr.args[0]
+                      for sub_expr in expr.args[0]]
+    select_target = select_targets[0]
+    if not all(target.op == core.symbol_p for target in select_targets):
+        raise NotImplementedError()
+    if not all(target == select_target
+               for target in select_targets):
+        raise NotImplementedError()
+
+    all_select_dims = [sub_expr.args[1]
+                       for sub_expr in expr.args[0]]
+    assert all(d == all_select_dims[0] for d in all_select_dims)
+    select_dim = all_select_dims[0]
+
+
+    selections = [sub_expr.args[2]
+                  for sub_expr in expr.args[0]]
+    all_select_indices = []
+    for selection in selections:
+        select_indices = selection
+        all_select_indices.append(torch.as_tensor(select_indices))
+
+    dim = expr.kwargs.get("dim", 0)
+    select_target_shape = v.shape(select_target)
+    ndim = len(select_target_shape)
+    if not canonical_axis(dim, ndim) == canonical_axis(select_dim, ndim):
+        raise NotImplementedError()
+    else:
+        # prefer the version that the user specified
+        dim = select_dim
+
+    indices = torch.cat(all_select_indices)
+
+    if torch.equal(indices, torch.arange(select_target_shape[dim])):
+        # the vectorized index_select is selecting all elements, so it can be
+        # factored out.
+        return select_target
+
+    return vtorch.index_select(select_target, dim, indices)
+
+
+v.pushthrough_impls.update({
+    (p.cat_p, p.index_select_p): push_cat_through_index_select,
+})
+
+
 def push_cat_through_getitem(expr, allow_partial=True):
     assert expr.op == p.cat_p
+
+    # raise NotImplementedError(
+    #     "Perform selection using vtorch.index_select. "
+    #     "Indexing through __getitem__ in pytorch is very slow on CUDA, "
+    #     "much faster to use vtorch.index_select, and its API is also easier "
+    #     "to vectorize.
+    # )
 
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
     # they are the same symbol.

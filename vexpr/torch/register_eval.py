@@ -50,6 +50,7 @@ core.eval_impls.update({
     p.cat_p: torch.cat,
     p.moveaxis_p: torch.moveaxis,
     p.reshape_p: torch.reshape,
+    p.index_select_p: torch.index_select,
     p.exp_p: torch.exp,
     p.log_p: torch.log,
     p.sum_p: allow_listlike_arg0(torch.sum),
