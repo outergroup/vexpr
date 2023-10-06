@@ -646,9 +646,11 @@ def push_stack_through_cdist(expr, allow_partial=True):
 
     kwargs = dict(
         groups = groups,
-        pre_shuffle_indices=pre_shuffle_indices,
-        post_shuffle_indices=post_shuffle_indices,
     )
+    if pre_shuffle_indices is not None:
+        kwargs["pre_shuffle_indices"] = pre_shuffle_indices
+    if post_shuffle_indices is not None:
+        kwargs["post_shuffle_indices"] = post_shuffle_indices
     if "dim" in expr.kwargs:
         kwargs["stack_dim"] = expr.kwargs["dim"]
 

@@ -125,8 +125,10 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
             applicable_exprs.append(child_expr)
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
-            child_pre_shuffles.append(child_expr.kwargs["pre_shuffle_indices"])
-            child_post_shuffles.append(child_expr.kwargs["post_shuffle_indices"])
+            child_pre_shuffles.append(
+                child_expr.kwargs.get("pre_shuffle_indices", None))
+            child_post_shuffles.append(
+                child_expr.kwargs.get("post_shuffle_indices", None))
         else:
             if not allow_partial:
                 raise v.CannotVectorize()
@@ -208,9 +210,11 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
 
     kwargs = dict(
         groups = groups,
-        pre_shuffle_indices=pre_shuffle_indices,
-        post_shuffle_indices=post_shuffle_indices,
     )
+    if pre_shuffle_indices is not None:
+        kwargs["pre_shuffle_indices"] = pre_shuffle_indices
+    if post_shuffle_indices is not None:
+        kwargs["post_shuffle_indices"] = post_shuffle_indices
     if "dim" in expr.kwargs:
         kwargs["stack_dim"] = expr.kwargs["dim"]
 

@@ -123,7 +123,9 @@ def cdist_multi_impl(x1, x2, groups, pre_shuffle_indices=None,
             x2_ = x2_.view(x2_.shape[:-1] + (n, d)).movedim(-2, batch_dim)
             ret.append(torch.cdist(x1_, x2_, p=metric))
 
-        ret = torch.cat(ret, dim=stack_dim)
+        ret = torch.cat(ret, dim=batch_dim)
+        if stack_dim != batch_dim:
+            ret = ret.movedim(batch_dim, stack_dim)
 
         if post_shuffle_indices is not None:
             ret = ret.index_select(stack_dim, post_shuffle_indices)
