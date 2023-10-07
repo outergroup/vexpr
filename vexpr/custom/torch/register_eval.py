@@ -5,11 +5,11 @@ from vexpr.torch.register_eval import allow_listlike_arg0
 from vexpr.torch.utils import torch_stack_shape
 from . import primitives as p
 
+# TODO remove this and rely on index_select, merging all of their vectorization
+# logic. (It won't be faster, but it creates a rising tide to lift all boats.)
 def shuffle_impl(arr, indices, dim=0):
     with torch.profiler.record_function("shuffle"):
-        selection = [slice(None)] * arr.ndim
-        selection[dim] = indices
-        return arr[selection]
+        return arr.index_select(dim, indices)
 
 core.eval_impls[p.shuffle_p] = shuffle_impl
 
@@ -105,10 +105,6 @@ core.eval_impls[p.split_and_stack_p] = split_and_stack_impl
 def cdist_multi_impl(x1, x2, groups, pre_shuffle_indices=None,
                      post_shuffle_indices=None, stack_dim=0):
     with torch.profiler.record_function("cdist_multi"):
-        if pre_shuffle_indices is not None:
-            x1 = x1.index_select(-1, pre_shuffle_indices)
-            x2 = x2.index_select(-1, pre_shuffle_indices)
-
         if stack_dim >= 0:
             batch_dim = stack_dim
         else:
@@ -126,9 +122,6 @@ def cdist_multi_impl(x1, x2, groups, pre_shuffle_indices=None,
         ret = torch.cat(ret, dim=batch_dim)
         if stack_dim != batch_dim:
             ret = ret.movedim(batch_dim, stack_dim)
-
-        if post_shuffle_indices is not None:
-            ret = ret.index_select(stack_dim, post_shuffle_indices)
 
         return ret
 

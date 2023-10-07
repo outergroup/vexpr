@@ -10,6 +10,7 @@ import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import (
+    maybe_shuffle,
     split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
@@ -58,11 +59,7 @@ def push_cat_through_shuffle(expr, allow_partial=True):
     )
     indices = torch.cat(indices)
 
-    if not torch.equal(indices, torch.arange(len(indices))):
-        ret = v.with_return_shape(vctorch.shuffle(ret, indices, **expr.kwargs),
-                                  result_shape)
-
-    return ret
+    return maybe_shuffle(ret, indices, **expr.kwargs)
 
 
 v.pushthrough_impls[(p.cat_p, csp_p.shuffle_p)] = push_cat_through_shuffle
@@ -109,9 +106,6 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     left = []
     right = []
 
-    child_pre_shuffles = []
-    child_post_shuffles = []
-
     applicable_exprs = []
     applicable_indices = []
     remainder = []
@@ -125,10 +119,6 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
             applicable_exprs.append(child_expr)
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
-            child_pre_shuffles.append(
-                child_expr.kwargs.get("pre_shuffle_indices", None))
-            child_post_shuffles.append(
-                child_expr.kwargs.get("post_shuffle_indices", None))
         else:
             if not allow_partial:
                 raise v.CannotVectorize()
@@ -160,70 +150,29 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
     post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
 
-    # Incorporate the previous shuffles
-    if any(indices is not None for indices in child_pre_shuffles):
-        all_child_pre_shuffle_indices = []
-        base = 0
-        for child_groups, shuffle_indices in zip(all_groups,
-                                                 child_pre_shuffles):
-            num_elements = sum(length * count
-                               for (length, _), count in child_groups)
-            if shuffle_indices is None:
-                shuffle_indices = torch.arange(base, base + num_elements)
-            else:
-                shuffle_indices += base
-            base += num_elements
-            all_child_pre_shuffle_indices.append(shuffle_indices)
-        all_child_pre_shuffle_indices = torch.cat(all_child_pre_shuffle_indices)
-
-        if pre_shuffle_indices is None:
-            pre_shuffle_indices = all_child_pre_shuffle_indices
-        else:
-            pre_shuffle_indices = all_child_pre_shuffle_indices[pre_shuffle_indices]
-
-    if any(indices is not None for indices in child_post_shuffles):
-        all_child_post_shuffle_indices = []
-        base = 0
-        for child_groups, shuffle_indices in zip(all_groups,
-                                                 child_post_shuffles):
-            num_elements = sum(count
-                               for _, count in child_groups)
-            if shuffle_indices is None:
-                shuffle_indices = torch.arange(base, base + num_elements)
-            else:
-                shuffle_indices += base
-            base += num_elements
-            all_child_post_shuffle_indices.append(shuffle_indices)
-        all_child_post_shuffle_indices = torch.cat(all_child_post_shuffle_indices)
-
-        if post_shuffle_indices is None:
-            post_shuffle_indices = all_child_post_shuffle_indices
-        else:
-            post_shuffle_indices = post_shuffle_indices[all_child_post_shuffle_indices]
-
-    if torch.equal(pre_shuffle_indices, torch.arange(len(pre_shuffle_indices))):
-        pre_shuffle_indices = None
-
-    if torch.equal(post_shuffle_indices,
-                   torch.arange(len(post_shuffle_indices))):
-        post_shuffle_indices = None
+    if pre_shuffle_indices is not None:
+        left = maybe_shuffle(left, pre_shuffle_indices, dim=-1)
+        right = maybe_shuffle(right, pre_shuffle_indices, dim=-1)
 
     kwargs = dict(
         groups = groups,
     )
-    if pre_shuffle_indices is not None:
-        kwargs["pre_shuffle_indices"] = pre_shuffle_indices
-    if post_shuffle_indices is not None:
-        kwargs["post_shuffle_indices"] = post_shuffle_indices
     if "dim" in expr.kwargs:
         kwargs["stack_dim"] = expr.kwargs["dim"]
 
+    result_shape = torch_cat_shape([v.shape(child_expr)
+                                    for child_expr in applicable_exprs],
+                                   dim=cat_dim)
+    applicable = v.with_return_shape(
+        vctorch.cdist_multi(left, right, **kwargs),
+        result_shape)
+
+    if post_shuffle_indices is not None:
+        applicable = maybe_shuffle(applicable, post_shuffle_indices,
+                                   dim=cat_dim)
+
     return cat_remainder_then_combine(
-        v.with_return_shape(
-            vctorch.cdist_multi(left, right, **kwargs),
-            torch_cat_shape([v.shape(child_expr)
-                             for child_expr in applicable_exprs],
-                            dim=cat_dim)),
+        applicable,
         remainder,
         applicable_indices,
         remainder_indices,

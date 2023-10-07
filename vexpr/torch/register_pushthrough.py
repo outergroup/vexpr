@@ -12,6 +12,7 @@ import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.vectorization import _vectorize, with_metadata
 from vexpr.custom.torch.utils import (
+    maybe_shuffle,
     split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
@@ -91,13 +92,6 @@ v.pushthrough_impls.update({
 
 def push_cat_through_getitem(expr, allow_partial=True):
     assert expr.op == p.cat_p
-
-    # raise NotImplementedError(
-    #     "Perform selection using vtorch.index_select. "
-    #     "Indexing through __getitem__ in pytorch is very slow on CUDA, "
-    #     "much faster to use vtorch.index_select, and its API is also easier "
-    #     "to vectorize.
-    # )
 
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
     # they are the same symbol.
@@ -473,10 +467,18 @@ def push_cat_through_truediv(expr, allow_partial=True):
         den.append(child_expr.args[1])
 
     axis = expr.kwargs.get("dim", 0)
-    num = v._vectorize(vtorch.cat(num, dim=axis))
-    den = v._vectorize(vtorch.cat(den, dim=axis))
+    num_shape = torch_cat_shape([v.shape(child_expr) for child_expr in num],
+                                dim=axis)
+    den_shape = torch_cat_shape([v.shape(child_expr) for child_expr in den],
+                                dim=axis)
+    num = v.with_return_shape(v._vectorize(vtorch.cat(num, dim=axis)),
+                              num_shape)
+    den = v.with_return_shape(v._vectorize(vtorch.cat(den, dim=axis)),
+                              den_shape)
 
-    return num / den
+    return v.with_return_shape(num / den,
+                               torch.broadcast_shapes(v.shape(num),
+                                                      v.shape(den)))
 
 def push_stack_through_mul(expr, allow_partial=True):
     assert expr.op == p.stack_p
@@ -524,11 +526,12 @@ def push_stack_through_mul(expr, allow_partial=True):
     dim = expr.kwargs.get("dim", 0)
     ndim = len(v.shape(right))
     if canonical_axis(dim, ndim) == ndim - 1:
-        ret = left * right
+        return v.with_return_shape(left * right,
+                                   torch.broadcast_shapes(v.shape(left),
+                                                          v.shape(right)))
     else:
-        ret = vctorch.mul_along_dim(left, right, dim=dim)
-
-    return v.with_return_shape(ret, v.shape(right))
+        return v.with_return_shape(vctorch.mul_along_dim(left, right, dim=dim),
+                                   v.shape(right))
 
 
 def push_cat_through_mul(expr, allow_partial=True):
@@ -699,21 +702,14 @@ def push_stack_through_cdist(expr, allow_partial=True):
             base += length2
 
     pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
-    if torch.equal(pre_shuffle_indices, torch.arange(len(pre_shuffle_indices))):
-        pre_shuffle_indices = None
-
     post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
-    if torch.equal(post_shuffle_indices,
-                   torch.arange(len(post_shuffle_indices))):
-        post_shuffle_indices = None
+
+    left = maybe_shuffle(left, pre_shuffle_indices, dim=-1)
+    right = maybe_shuffle(right, pre_shuffle_indices, dim=-1)
 
     kwargs = dict(
         groups = groups,
     )
-    if pre_shuffle_indices is not None:
-        kwargs["pre_shuffle_indices"] = pre_shuffle_indices
-    if post_shuffle_indices is not None:
-        kwargs["post_shuffle_indices"] = post_shuffle_indices
     if "dim" in expr.kwargs:
         kwargs["stack_dim"] = expr.kwargs["dim"]
 
@@ -721,15 +717,17 @@ def push_stack_through_cdist(expr, allow_partial=True):
     child_matrix_shape = child_matrix_shapes[0]
     assert all(shape == child_matrix_shape for shape in child_matrix_shapes[1:])
 
-    axis = expr.kwargs.get("dim", 0)
-    # use axis to determine result shape after stack
+    dim = expr.kwargs.get("dim", 0)
+    # use dim to determine result shape after stack
     result_shape = child_matrix_shape
-    if axis < 0:
-        axis += len(result_shape) + 1
-    result_shape = result_shape[:axis] + (len(lengths),) + result_shape[axis:]
+    if dim < 0:
+        dim += len(result_shape) + 1
+    result_shape = result_shape[:dim] + (len(lengths),) + result_shape[dim:]
+
     applicable =  v.with_return_shape(
         vctorch.cdist_multi(left, right, **kwargs),
         result_shape)
+    applicable = maybe_shuffle(applicable, post_shuffle_indices, dim=dim)
 
     return stack_remainder_then_combine(
         applicable,
