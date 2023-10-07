@@ -11,12 +11,10 @@ import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import (
     maybe_shuffle,
-    split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
     invert_shuffle,
     torch_cat_shape,
-    torch_stack_shape,
     cat_remainder_then_combine,
     push_stack_through_reduction,
 )
@@ -63,30 +61,6 @@ def push_cat_through_shuffle(expr, allow_partial=True):
 
 
 v.pushthrough_impls[(p.cat_p, csp_p.shuffle_p)] = push_cat_through_shuffle
-
-
-def combine_split_and_stack(exprs, dim=0):
-    assert all(expr.op == csp_p.split_and_stack_p
-               for expr in exprs)
-
-    lengths = []
-    children = []
-    for expr in exprs:
-        lengths += expr.kwargs["lengths"]
-        children.append(expr.args[0])
-
-    stack_dim = exprs[0].kwargs["stack_dim"]
-    split_dim = exprs[0].kwargs["split_dim"]
-    assert split_dim == dim
-
-    children = v._vectorize(vtorch.cat(children, dim=dim))
-
-    return vctorch.split_and_stack(
-        children,
-        **split_and_stack_kwargs(lengths,
-                                 split_dim=split_dim,
-                                 stack_dim=stack_dim)
-    )
 
 
 def push_cat_through_cdist_multi(expr, allow_partial=True):
@@ -150,9 +124,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
     post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
 
-    if pre_shuffle_indices is not None:
-        left = maybe_shuffle(left, pre_shuffle_indices, dim=-1)
-        right = maybe_shuffle(right, pre_shuffle_indices, dim=-1)
+    left = maybe_shuffle(left, pre_shuffle_indices, dim=-1)
+    right = maybe_shuffle(right, pre_shuffle_indices, dim=-1)
 
     kwargs = dict(
         groups = groups,
@@ -167,9 +140,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
         vctorch.cdist_multi(left, right, **kwargs),
         result_shape)
 
-    if post_shuffle_indices is not None:
-        applicable = maybe_shuffle(applicable, post_shuffle_indices,
-                                   dim=cat_dim)
+    applicable = maybe_shuffle(applicable, post_shuffle_indices,
+                               dim=cat_dim)
 
     return cat_remainder_then_combine(
         applicable,
@@ -195,32 +167,62 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
     assert all(dim == reduction_dims[0] for dim in reduction_dims)
     reduction_dim = reduction_dims[0]
 
+    all_groups = [child_expr.kwargs["groups"]
+                  for child_expr in expr.args[0]
+                  if child_expr.op == reduction_multi_p]
+
+    all_groups = []
     lengths = []
     grandchildren = []
     for child_expr in expr.args[0]:
         if isinstance(child_expr, vp.Vexpr) \
            and child_expr.op == reduction_multi_p:
-            split_and_stack_expr = child_expr.args[0]
-            assert split_and_stack_expr.op == csp_p.split_and_stack_p
-            lengths += split_and_stack_expr.kwargs["lengths"]
-            grandchildren.append(split_and_stack_expr.args[0])
+            grandchildren.append(child_expr.args[0])
+            all_groups.append(child_expr.kwargs["groups"])
         else:
             grandchildren.append(child_expr)
-            lengths += [1] * v.shape(child_expr)[cat_dim]
+            all_groups.append([(1, v.shape(child_expr)[cat_dim])])
 
     grandchildren = v._vectorize(vtorch.cat(grandchildren, dim=cat_dim))
-    grandchildren = vctorch.split_and_stack(grandchildren,
-                                            **split_and_stack_kwargs(
-                                                lengths,
-                                                split_dim=reduction_dim,
-                                                stack_dim=reduction_dim),
-                                            fill_value=fill_value)
 
-    return v.with_return_shape(parallel_reduction(grandchildren,
-                                                  dim=reduction_dim),
-                               torch_cat_shape([v.shape(child_expr)
-                                                for child_expr in expr.args[0]],
-                                               dim=cat_dim))
+    groups = collections.Counter()
+    for group in all_groups:
+        groups.update(collections.Counter(dict(group)))
+    groups = list(groups.items())
+
+    pre_shuffle_indices = []
+    post_shuffle_indices_inverted = []
+    for length, count in groups:
+        base = 0
+        i = 0
+        n_found = 0
+        for child_groups in all_groups:
+            for length2, count2 in child_groups:
+                group_length = length2 * count2
+                if length2 == length:
+                    pre_shuffle_indices += list(range(base, base + group_length))
+                    post_shuffle_indices_inverted += list(range(i, i + count2))
+                    n_found += group_length
+                base += group_length
+                i += count2
+        assert n_found == length * count
+    assert i == sum(count for _, count in groups)
+
+    pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
+    post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
+
+    grandchildren = maybe_shuffle(grandchildren, pre_shuffle_indices,
+                                  reduction_dim)
+
+    result_shape = torch_cat_shape([v.shape(child_expr)
+                                    for child_expr in expr.args[0]],
+                                   dim=cat_dim)
+    result = v.with_return_shape(parallel_reduction(grandchildren,
+                                                    groups=groups, dim=reduction_dim),
+                                 result_shape)
+
+    return maybe_shuffle(result, post_shuffle_indices, dim=cat_dim)
+
 
 v.pushthrough_impls.update({
     (p.cat_p, csp_p.sum_multi_p): partial(

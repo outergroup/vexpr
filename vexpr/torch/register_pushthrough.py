@@ -13,7 +13,6 @@ import vexpr.vectorization as v
 from vexpr.vectorization import _vectorize, with_metadata
 from vexpr.custom.torch.utils import (
     maybe_shuffle,
-    split_and_stack_kwargs,
 )
 from vexpr.torch.utils import (
     invert_shuffle,
@@ -186,7 +185,10 @@ def push_cat_through_getitem(expr, allow_partial=True):
     else:
         new_selection = ((slice(None),) * axis) + (indices,)
 
-    return select_target[new_selection]
+    return v.with_return_shape(select_target[new_selection],
+                               torch_cat_shape([v.shape(child_expr)
+                                                for child_expr in expr.args[0]],
+                                               axis))
 
 v.pushthrough_impls.update({
     (p.cat_p, core.operator_getitem_p): push_cat_through_getitem,

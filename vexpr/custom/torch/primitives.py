@@ -18,8 +18,6 @@ mul_along_dim_p, mul_along_dim = _p_and_constructor(
 index_add_into_zeros_p, index_add_into_zeros = _p_and_constructor("custom.torch.index_add_into_zeros")
 index_reduce_into_ones_p, index_reduce_into_ones = _p_and_constructor("custom.torch.index_reduce_into_ones")
 
-split_and_stack_p, split_and_stack = _p_and_constructor("custom.torch.split_and_stack")
-
 heads_tails_p, heads_tails = _p_and_constructor("custom.torch.heads_tails")
 
 __all__ = [
@@ -32,6 +30,5 @@ __all__ = [
     "mul_along_dim",
     "index_add_into_zeros",
     "index_reduce_into_ones",
-    "split_and_stack",
     "heads_tails",
 ]
