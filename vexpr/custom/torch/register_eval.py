@@ -1,3 +1,5 @@
+from functools import partial
+
 import torch
 
 from vexpr import core
@@ -40,27 +42,6 @@ def cdist_multi_impl(x1, x2, groups, stack_dim=0):
 core.eval_impls[p.cdist_multi_p] = cdist_multi_impl
 
 
-def sum_multi_impl(x, groups, dim):
-    with torch.profiler.record_function("sum_multi"):
-        if dim < 0:
-            dim += x.ndim
-
-        ret = []
-        splits = [d * n for d, n in groups]
-        for (d, n), x_ in zip(groups, x.split(splits, dim=dim)):
-            if d == 1:
-                ret.append(x_)
-            else:
-                view_shape = x_.shape[:dim] + (n, d) + x_.shape[dim + 1:]
-                x_ = x_.view(view_shape)
-                ret.append(x_.sum(dim=dim + 1))
-
-        return torch.cat(ret, dim=dim)
-
-
-core.eval_impls[p.sum_multi_p] = sum_multi_impl
-
-
 def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
     with torch.profiler.record_function("fast_prod_positive"):
         # Much faster than torch.prod in the backward pass, since it doesn't require
@@ -68,22 +49,13 @@ def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
         # https://twitter.com/mrcslws/status/1589721597396815873
         return x.clamp(min=epsilon).log().sum(dim=dim).exp()
 
+
 core.eval_impls[p.fast_prod_positive_p] = allow_listlike_arg0(
     fast_prod_positive_impl)
 
 
-def fast_prod_positive_multi_impl(x, groups, dim, epsilon=1e-10):
-    with torch.profiler.record_function("fast_prod_positive_multi"):
-        x = x.clamp(min=epsilon).log()
-        x = sum_multi_impl(x, groups, dim)
-        x = x.exp()
-        return x
-
-core.eval_impls[p.fast_prod_positive_multi_p] = fast_prod_positive_multi_impl
-
-
-def prod_multi_impl(x, groups, dim):
-    with torch.profiler.record_function("prod_multi"):
+def reduction_multi(reduction_f, name, x, groups, dim):
+    with torch.profiler.record_function("fast_prod_positive"):
         if dim < 0:
             dim += x.ndim
 
@@ -95,12 +67,17 @@ def prod_multi_impl(x, groups, dim):
             else:
                 view_shape = x_.shape[:dim] + (n, d) + x_.shape[dim + 1:]
                 x_ = x_.view(view_shape)
-                ret.append(x_.prod(dim=dim + 1))
+                ret.append(reduction_f(x_, dim=dim+1))
 
         return torch.cat(ret, dim=dim)
 
 
-core.eval_impls[p.prod_multi_p] = prod_multi_impl
+core.eval_impls.update({
+    p.sum_multi_p: partial(reduction_multi, torch.sum, "sum_multi"),
+    p.prod_multi_p: partial(reduction_multi, torch.prod, "prod_multi"),
+    p.fast_prod_positive_multi_p: partial(
+        reduction_multi, fast_prod_positive_impl, "fast_prod_positive_multi"),
+})
 
 
 def mul_along_dim_impl(w, t, dim=0):
