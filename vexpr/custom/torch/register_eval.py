@@ -55,7 +55,7 @@ core.eval_impls[p.fast_prod_positive_p] = allow_listlike_arg0(
 
 
 def reduction_multi(reduction_f, name, x, groups, dim):
-    with torch.profiler.record_function("fast_prod_positive"):
+    with torch.profiler.record_function(name):
         if dim < 0:
             dim += x.ndim
 
