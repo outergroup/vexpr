@@ -1,5 +1,3 @@
-from functools import partial
-
 import torch
 
 from vexpr import core
@@ -54,29 +52,44 @@ core.eval_impls[p.fast_prod_positive_p] = allow_listlike_arg0(
     fast_prod_positive_impl)
 
 
-def reduction_multi(reduction_f, name, x, groups, dim):
-    with torch.profiler.record_function(name):
-        if dim < 0:
-            dim += x.ndim
+def reduction_multi(reduction_f, x, groups, dim):
+    if dim < 0:
+        dim += x.ndim
 
-        ret = []
-        splits = [d * n for d, n in groups]
-        for (d, n), x_ in zip(groups, x.split(splits, dim=dim)):
-            if d == 1:
-                ret.append(x_)
-            else:
-                view_shape = x_.shape[:dim] + (n, d) + x_.shape[dim + 1:]
-                x_ = x_.view(view_shape)
-                ret.append(reduction_f(x_, dim=dim+1))
+    ret = []
+    splits = [d * n for d, n in groups]
+    for (d, n), x_ in zip(groups, x.split(splits, dim=dim)):
+        if d == 1:
+            ret.append(x_)
+        else:
+            view_shape = x_.shape[:dim] + (n, d) + x_.shape[dim + 1:]
+            x_ = x_.view(view_shape)
+            ret.append(reduction_f(x_, dim=dim+1))
 
-        return torch.cat(ret, dim=dim)
+    return torch.cat(ret, dim=dim)
+
+
+def sum_multi_impl(x, groups, dim):
+    with torch.profiler.record_function("sum_multi"):
+        return reduction_multi(torch.sum, x, groups, dim)
+
+
+def prod_multi_impl(x, groups, dim):
+    with torch.profiler.record_function("prod_multi"):
+        return reduction_multi(torch.prod, x, groups, dim)
+
+
+def fast_prod_positive_multi_impl(x, groups, dim):
+    with torch.profiler.record_function("fast_prod_positive_multi"):
+        return reduction_multi(fast_prod_positive_impl, x, groups, dim)
 
 
 core.eval_impls.update({
-    p.sum_multi_p: partial(reduction_multi, torch.sum, "sum_multi"),
-    p.prod_multi_p: partial(reduction_multi, torch.prod, "prod_multi"),
-    p.fast_prod_positive_multi_p: partial(
-        reduction_multi, fast_prod_positive_impl, "fast_prod_positive_multi"),
+    # Ideally these would be implemented with functools.partial, but this causes
+    # torch.compile to split out into a new CompiledFunction (as of PyTorch 2.1)
+    p.sum_multi_p: sum_multi_impl,
+    p.prod_multi_p: prod_multi_impl,
+    p.fast_prod_positive_multi_p: fast_prod_positive_multi_impl,
 })
 
 
