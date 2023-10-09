@@ -79,9 +79,30 @@ def prod_multi_impl(x, groups, dim):
         return reduction_multi(torch.prod, x, groups, dim)
 
 
-def fast_prod_positive_multi_impl(x, groups, dim):
+def fast_prod_positive_multi_impl(x, groups, dim, epsilon=1e-10):
     with torch.profiler.record_function("fast_prod_positive_multi"):
-        return reduction_multi(fast_prod_positive_impl, x, groups, dim)
+        # return reduction_multi(
+        #     partial(fast_prod_positive_impl, epsilon=epsilon), x, groups, dim
+        # )
+
+        # Below is equivalent to above. Using functools.partial causes
+        # torch.compile to split out into a new CompiledFunction (as of PyTorch
+        # 2.1)
+        if dim < 0:
+            dim += x.ndim
+
+        ret = []
+        splits = [d * n for d, n in groups]
+        for (d, n), x_ in zip(groups, x.split(splits, dim=dim)):
+            if d == 1:
+                ret.append(x_)
+            else:
+                view_shape = x_.shape[:dim] + (n, d) + x_.shape[dim + 1:]
+                x_ = x_.view(view_shape)
+                ret.append(fast_prod_positive_impl(x_, dim=dim+1,
+                                                   epsilon=epsilon))
+
+        return torch.cat(ret, dim=dim)
 
 
 core.eval_impls.update({

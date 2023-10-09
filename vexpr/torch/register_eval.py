@@ -23,7 +23,7 @@ v.shape_impls.update({
 
 def allow_listlike_arg0(torch_func):
     def wrapper(arg0, *args, **kwargs):
-        with torch.profiler.record_function("listlike_of_tensors"):
+        with torch.profiler.record_function("allow_listlike_arg0"):
             if isinstance(arg0, (list, tuple)):
                 if len(arg0) > 1 and isinstance(arg0[0], torch.Tensor):
                     return torch_func(torch.stack(arg0), *args, **kwargs)
