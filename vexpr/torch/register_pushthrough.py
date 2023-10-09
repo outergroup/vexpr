@@ -81,7 +81,12 @@ def push_cat_through_index_select(expr, allow_partial=True):
         # factored out.
         return select_target
 
-    return vtorch.index_select(select_target, dim, indices)
+    return_shape = list(v.shape(select_target))
+    return_shape[dim] = len(indices)
+    return_shape = tuple(return_shape)
+    return v.with_return_shape(
+        vtorch.index_select(select_target, dim, indices),
+        return_shape)
 
 
 v.pushthrough_impls.update({
