@@ -14,25 +14,18 @@ def shuffle_impl(arr, indices, dim=0):
 core.eval_impls[p.shuffle_p] = shuffle_impl
 
 
-def cdist_multi_impl(x1, x2, groups, stack_dim=0):
+def cdist_multi_impl(x1, x2, groups):
     with torch.profiler.record_function("cdist_multi"):
-        if stack_dim >= 0:
-            batch_dim = stack_dim
-        else:
-            batch_dim = len(x1.shape[:-2]) + stack_dim + 1
-
         ret = []
         splits = [d * n for (d, p), n in groups]
         for ((d, metric), n), x1_, x2_ in zip(groups,
                                               x1.split(splits, dim=-1),
                                               x2.split(splits, dim=-1)):
-            x1_ = x1_.view(x1_.shape[:-1] + (n, d)).movedim(-2, batch_dim)
-            x2_ = x2_.view(x2_.shape[:-1] + (n, d)).movedim(-2, batch_dim)
+            x1_ = x1_.view(x1_.shape[:-1] + (n, d)).movedim(-2, -3)
+            x2_ = x2_.view(x2_.shape[:-1] + (n, d)).movedim(-2, -3)
             ret.append(torch.cdist(x1_, x2_, p=metric))
 
-        ret = torch.cat(ret, dim=batch_dim)
-        if stack_dim != batch_dim:
-            ret = ret.movedim(batch_dim, stack_dim)
+        ret = torch.cat(ret, dim=-3)
 
         return ret
 
@@ -115,9 +108,11 @@ core.eval_impls.update({
 
 
 def mul_along_dim_impl(w, t, dim=0):
-    new_shape = [1] * t.dim()
-    new_shape[dim] = len(w)
-    return w.view(new_shape) * t
+    with torch.profiler.record_function("mul_along_dim"):
+        new_shape = [1] * t.dim()
+        w_n = len(w.shape)
+        new_shape[dim - w_n + 1 : dim + 1] = w.shape
+        return w.view(new_shape) * t
 
 core.eval_impls[p.mul_along_dim_p] = mul_along_dim_impl
 

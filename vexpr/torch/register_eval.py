@@ -50,6 +50,7 @@ core.eval_impls.update({
     p.cat_p: torch.cat,
     p.moveaxis_p: torch.moveaxis,
     p.reshape_p: torch.reshape,
+    p.unsqueeze_p: torch.unsqueeze,
     p.index_select_p: torch.index_select,
     p.exp_p: torch.exp,
     p.log_p: torch.log,
@@ -59,6 +60,8 @@ core.eval_impls.update({
     p.scatter_p: torch.scatter,
 })
 
+def expand_impl(a, *sizes):
+    return a.expand(*sizes)
 
 def index_add_impl(a, dim, index, source, *args, **kwargs):
     return a.index_add(dim, index, source, *args, **kwargs)
@@ -67,6 +70,7 @@ def index_reduce_impl(a, dim, index, source, *args, **kwargs):
     return a.index_reduce(dim, index, source, *args, **kwargs)
 
 core.eval_impls.update({
+    p.expand_p: expand_impl,
     p.index_add_p: index_add_impl,
     p.index_reduce_p: index_reduce_impl,
 })

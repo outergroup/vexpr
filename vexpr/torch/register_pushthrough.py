@@ -15,6 +15,7 @@ from vexpr.custom.torch.utils import (
     maybe_shuffle,
 )
 from vexpr.torch.utils import (
+    canonical_axis,
     invert_shuffle,
     torch_cat_shape,
     torch_stack_shape,
@@ -23,15 +24,6 @@ from vexpr.torch.utils import (
     cat_remainder_then_combine,
     push_stack_through_reduction,
 )
-
-
-def canonical_axis(axis, ndim):
-    if axis is None:
-        return None
-    elif axis < 0:
-        return axis + ndim
-    else:
-        return axis
 
 
 def push_cat_through_index_select(expr, allow_partial=True):
@@ -247,6 +239,40 @@ v.pushthrough_impls.update({
                                  vtorch.ones),
 })
 
+
+def push_cat_through_unsqueeze(expr, allow_partial=True):
+    assert expr.op == p.cat_p
+    assert all(isinstance(child_expr, vp.Vexpr)
+               and child_expr.op == p.unsqueeze_p
+               for child_expr in expr.args[0])
+
+    unsqueeze_dims = [child_expr.args[1]
+                      for child_expr in expr.args[0]]
+    assert all(dim == unsqueeze_dims[0] for dim in unsqueeze_dims)
+    unsqueeze_dim = unsqueeze_dims[0]
+
+    grandchildren = [child_expr.args[0] for child_expr in expr.args[0]]
+    grandchildren = v._vectorize(
+        v.with_return_shape(vtorch.cat(grandchildren, **expr.kwargs),
+                            torch_cat_shape([v.shape(gc)
+                                             for gc in grandchildren],
+                                            **expr.kwargs)))
+
+    return_shape = v.shape(grandchildren)
+    unsqueeze_dim_nonneg = (unsqueeze_dim
+                            if unsqueeze_dim >= 0
+                            else unsqueeze_dim + len(return_shape) + 1)
+    return_shape = (return_shape[:unsqueeze_dim_nonneg]
+                    + (1,)
+                    + return_shape[unsqueeze_dim_nonneg:])
+
+    return v.with_return_shape(
+        vtorch.unsqueeze(grandchildren, unsqueeze_dim),
+        return_shape
+    )
+
+
+
 def push_moveaxis_through_sum(expr, allow_partial=True):
     assert expr.op == p.moveaxis_p
     assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.sum_p
@@ -273,6 +299,7 @@ def push_moveaxis_through_sum(expr, allow_partial=True):
     return sum(sum_arg0, dim=new_axis)
 
 v.pushthrough_impls.update({
+    (p.cat_p, p.unsqueeze_p): push_cat_through_unsqueeze,
     (p.moveaxis_p, p.stack_p): push_moveaxis_through_stack,
     (p.moveaxis_p, p.sum_p): push_moveaxis_through_sum,
 })
@@ -281,9 +308,10 @@ v.pushthrough_impls.update({
 def push_cat_through_stack(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
-    # initial hack: assume all args are stack_p
-    assert all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
-               for arg in expr.args[0])
+    # initial hack: only do anything if everything is a stack
+    if not all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
+               for arg in expr.args[0]):
+        return expr
 
     dim = expr.kwargs.get("dim", 0)
 
@@ -598,7 +626,7 @@ def push_cat_through_mul(expr, allow_partial=True):
     return v.with_return_shape(left * right, torch_cat_shape(child_shapes,
                                                              dim=dim))
 
-def push_cat_through_scatter(expr, allow_partial):
+def push_cat_through_scatter(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
     into = []
@@ -616,7 +644,15 @@ def push_cat_through_scatter(expr, allow_partial):
         assert canonical_axis(child_expr.args[1], ndim) == canonical_axis(dim, ndim)
 
         into.append(child_expr.args[0])
-        indices.append(base + child_expr.args[2])
+        child_indices = child_expr.args[2]
+        if isinstance(child_indices, vp.Vexpr):
+            if child_indices.op == p.expand_p:
+                child_indices = child_indices.args[0]
+            else:
+                raise NotImplementedError(
+                    "child_indices must be a tensor or a vtorch.expand Vexpr"
+                )
+        indices.append(base + child_indices)
         sources.append(child_expr.args[3])
 
         base += v.shape(child_expr)[dim]
@@ -630,7 +666,12 @@ def push_cat_through_scatter(expr, allow_partial):
                                             into_shape))
     sources = v._vectorize(v.with_return_shape(vtorch.cat(sources, dim=dim),
                                                source_shape))
-    indices = torch.cat(indices).view(v.shape(sources))
+    indices = torch.cat(indices, dim=dim)
+    batch_shape = v.shape(sources)[:-1]
+    if len(batch_shape) > 0:
+        num_indices = indices.shape[-1]
+        indices = indices.view((1,) * (len(batch_shape)) + (num_indices,))
+        indices = vtorch.expand(indices, batch_shape + (num_indices,))
     return v.with_return_shape(vtorch.scatter(into, dim, indices, sources),
                                into_shape)
 
@@ -717,8 +758,11 @@ def push_stack_through_cdist(expr, allow_partial=True):
     kwargs = dict(
         groups = groups,
     )
-    if "dim" in expr.kwargs:
-        kwargs["stack_dim"] = expr.kwargs["dim"]
+    ndim = len(v.shape(expr))
+    if canonical_axis(stack_dim, ndim) != canonical_axis(-3, ndim):
+        raise ValueError(
+            f"cdist_multi always uses a stack_dim of -3, got {stack_dim}"
+        )
 
     # Compute shape of result
     child_matrix_shape = child_matrix_shapes[0]

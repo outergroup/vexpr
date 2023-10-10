@@ -14,6 +14,8 @@ from vexpr.custom.torch.utils import (
 )
 from vexpr.torch.utils import (
     invert_shuffle,
+    canonical_axis,
+    torch_stack_shape2,
     torch_cat_shape,
     cat_remainder_then_combine,
     push_stack_through_reduction,
@@ -130,8 +132,12 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     kwargs = dict(
         groups = groups,
     )
-    if "dim" in expr.kwargs:
-        kwargs["stack_dim"] = expr.kwargs["dim"]
+
+    ndim = len(v.shape(expr))
+    if canonical_axis(cat_dim, ndim) != canonical_axis(-3, ndim):
+        raise ValueError(
+            f"cdist_multi always uses a stack_dim of -3, got {cat_dim}"
+        )
 
     result_shape = torch_cat_shape([v.shape(child_expr)
                                     for child_expr in applicable_exprs],
@@ -238,6 +244,79 @@ v.pushthrough_impls.update({
 })
 
 
+def push_stack_through_mul_along_dim(expr, allow_partial=True):
+    assert expr.op == p.stack_p
+
+    stack_dim = expr.kwargs.get("dim", 0)
+
+    mul_along_dim_dims = [child_expr.kwargs.get("dim", None)
+                          for child_expr in expr.args[0]
+                          if isinstance(child_expr, vp.Vexpr)
+                          and child_expr.op == csp_p.mul_along_dim_p]
+    assert all(dim == mul_along_dim_dims[0] for dim in mul_along_dim_dims)
+    mul_along_dim_dim = mul_along_dim_dims[0]
+
+    w = []
+    t = []
+    identity = False
+    actual_indices = []
+    for i, child_expr in enumerate(expr.args[0]):
+        if isinstance(child_expr, vp.Vexpr) \
+           and child_expr.op == csp_p.mul_along_dim_p:
+            w.append(child_expr.args[0])
+            t.append(child_expr.args[1])
+            actual_indices.append(i)
+        else:
+            identity = True
+            t.append(child_expr)
+
+    kwargs = {}
+    if "dim" in expr.kwargs:
+        kwargs["dim"] = expr.kwargs["dim"]
+
+    w = v._vectorize(
+        v.with_return_shape(
+            vtorch.stack(w, dim=-1),
+            torch_stack_shape2([v.shape(d) for d in w],
+                               dim=-1)))
+
+    if identity:
+        ones_shape = v.shape(w)[:-1] + (len(expr.args[0]),)
+        indices = torch.tensor(actual_indices)
+        batch_shape = v.shape(w)[:-1]
+        if len(batch_shape) > 0:
+            num_indices = indices.shape[-1]
+            indices = indices.view((1,) * len(batch_shape) + (num_indices,))
+            indices = vtorch.expand(indices, batch_shape + (num_indices,))
+        w = v.with_return_shape(
+            vtorch.scatter(
+                v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
+                -1,
+                indices,
+                w),
+            ones_shape)
+
+    t = v._vectorize(
+        v.with_return_shape(
+            vtorch.stack(t, **kwargs),
+            torch_stack_shape2([v.shape(d) for d in t],
+                               **expr.kwargs)))
+
+    dim = expr.kwargs.get("dim", 0)
+    ndim = len(v.shape(t))
+
+    assert canonical_axis(dim, ndim) == canonical_axis(mul_along_dim_dim, ndim)
+
+    return v.with_return_shape(vctorch.mul_along_dim(w, t,
+                                                     dim=mul_along_dim_dim),
+                               v.shape(t))
+
+
+v.pushthrough_impls.update({
+    (p.stack_p, csp_p.mul_along_dim_p): push_stack_through_mul_along_dim
+})
+
+
 def push_cat_through_mul_along_dim(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
@@ -269,16 +348,22 @@ def push_cat_through_mul_along_dim(expr, allow_partial=True):
     total_n = base
 
     w_shapes = [v.shape(w_expr) for w_expr in w]
-    w = v._vectorize(v.with_return_shape(vtorch.cat(w, dim=cat_dim),
-                                            torch_cat_shape(w_shapes,
-                                                            dim=cat_dim)))
+    w = v._vectorize(v.with_return_shape(vtorch.cat(w, dim=-1),
+                                         torch_cat_shape(w_shapes,
+                                                         dim=-1)))
     if identity:
-        ones_shape = (total_n,)
+        ones_shape = v.shape(w)[:-1] + (total_n,)
+        indices = torch.tensor(actual_indices)
+        batch_shape = v.shape(w)[:-1]
+        if len(batch_shape) > 0:
+            num_indices = indices.shape[-1]
+            indices = indices.view((1,) * len(batch_shape) + (num_indices,))
+            indices = vtorch.expand(indices, batch_shape + (num_indices,))
         w = v.with_return_shape(
             vtorch.scatter(
                 v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
-                0,
-                torch.tensor(actual_indices),
+                -1,
+                indices,
                 w),
             ones_shape)
 

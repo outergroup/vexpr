@@ -9,6 +9,8 @@ cat_p, cat = _p_and_constructor("torch.cat")
 scatter_p, scatter = _p_and_constructor("torch.scatter")
 moveaxis_p, moveaxis = _p_and_constructor("torch.moveaxis")
 reshape_p, reshape = _p_and_constructor("torch.reshape")
+unsqueeze_p, unsqueeze = _p_and_constructor("torch.unsqueeze")
+expand_p, expand = _p_and_constructor("torch.expand")
 # Selection
 index_select_p, index_select = _p_and_constructor("torch.index_select")
 # Unary operators
@@ -31,6 +33,8 @@ __all__ = [
     "scatter",
     "moveaxis",
     "reshape",
+    "unsqueeze",
+    "expand",
     "index_select",
     "exp",
     "log",

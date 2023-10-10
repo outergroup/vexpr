@@ -30,6 +30,15 @@ def torch_cat_shape(child_shapes, dim=0):
             + child_shapes[0][dim + 1:])
 
 
+def canonical_axis(axis, ndim):
+    if axis is None:
+        return None
+    elif axis < 0:
+        return axis + ndim
+    else:
+        return axis
+
+
 def invert_shuffle(indices):
     inverted_indices = torch.zeros_like(torch.as_tensor(indices))
     inverted_indices[indices] = torch.arange(len(indices))
