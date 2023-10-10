@@ -36,18 +36,6 @@ def invert_shuffle(indices):
     return inverted_indices
 
 
-def maybe_shuffle(expr, scrambled_indices, **kwargs):
-    if torch.equal(torch.as_tensor(scrambled_indices),
-                   torch.arange(len(scrambled_indices))):
-        # the shuffle would be a no-op
-        return expr
-    else:
-        indices = invert_shuffle(scrambled_indices)
-        return v.with_return_shape(
-            vctorch.shuffle(expr, indices, **kwargs),
-            v.shape(expr))
-
-
 def stack_remainder_then_combine(applicable, remainder, applicable_indices,
                                  remainder_indices, **stack_kwargs):
     if len(remainder) == 0:
@@ -69,7 +57,8 @@ def stack_remainder_then_combine(applicable, remainder, applicable_indices,
         vtorch.cat([applicable, remainder], **stack_kwargs),
         result_shape)
 
-    return maybe_shuffle(result, applicable_indices + remainder_indices,
+    return maybe_shuffle(result,
+                         invert_shuffle(applicable_indices + remainder_indices),
                          **stack_kwargs)
 
 
@@ -93,7 +82,8 @@ def cat_remainder_then_combine(applicable, remainder, applicable_indices,
                                             **cat_kwargs),
                                  result_shape)
 
-    return maybe_shuffle(result, applicable_indices + remainder_indices,
+    return maybe_shuffle(result,
+                         invert_shuffle(applicable_indices + remainder_indices),
                          **cat_kwargs)
 
 
