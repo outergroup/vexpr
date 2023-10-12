@@ -144,7 +144,8 @@ def heads_tails_impl(alpha):
     with torch.profiler.record_function("heads_tails"):
         if isinstance(alpha, torch.Tensor) and alpha.ndim > 0:
             # Build [alpha1, 1-alpha1, alpha2, 1-alpha2, ...]
-            return torch.stack([alpha, 1.0 - alpha], dim=-1).view(*alpha.shape[:-1], -1)
+            return torch.stack([alpha, 1.0 - alpha], dim=-1).view(
+                *alpha.shape[:-1], -1)
         else:
             return torch.stack([alpha, 1.0 - alpha])
 
