@@ -39,6 +39,15 @@ def canonical_axis(axis, ndim):
         return axis
 
 
+def canonical_stack_dim(dim, ndim):
+    if dim is None:
+        return None
+    elif dim < 0:
+        return dim + ndim + 1
+    else:
+        return dim
+
+
 def maybe_lift_scatter(input, dim, index, src, batch_shape=()):
     if (isinstance(src, vp.Vexpr)
         and src.op == p.scatter_p

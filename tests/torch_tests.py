@@ -212,37 +212,53 @@ class TestVexprTorchTests(unittest.TestCase):
                     x2[..., indices] / lengthscale[indices]
                 )
 
-            additive_kernel = vtorch.sum(dirichlet_w
-                                         * vtorch.stack([subkernel(indices1),
-                                                         subkernel(indices2),
-                                                         subkernel(indices3)],
-                                                        dim=-1),
-                                         dim=-1)
+            additive_kernel = vtorch.sum(
+                vctorch.mul_along_dim(
+                    dirichlet_w,
+                    vtorch.stack([subkernel(indices1),
+                                  subkernel(indices2),
+                                  subkernel(indices3)]),
+                    dim=0),
+                dim=0)
             joint_kernel = subkernel(joint)
 
-            return scale * vtorch.sum(beta_w *
-                                      vtorch.stack([additive_kernel,
-                                                    joint_kernel], dim=-1),
-                                      dim=-1)
+            return vctorch.mul_along_dim(
+                scale,
+                vtorch.sum(
+                    vctorch.mul_along_dim(
+                        beta_w,
+                        vtorch.stack([additive_kernel,
+                                      joint_kernel]),
+                        dim=0),
+                    dim=0
+                ),
+                dim=0)
 
         @vp.make_vexpr
         def expected(x1, x2, scale, beta_w, dirichlet_w, lengthscale):
             indices = torch.tensor(indices1 + indices2 + indices3 + joint)
-            return scale * vtorch.sum(
-                beta_w
-                * vctorch.sum_multi(
-                    vtorch.scatter(vtorch.ones((4,)), 0, torch.tensor([0, 1, 2]),
-                                   dirichlet_w)
-                    * vctorch.cdist_multi(
-                        x1[..., indices]
-                        / lengthscale[indices],
-                        x2[..., indices]
-                        / lengthscale[indices],
-                        groups=[((1, 2), 3), ((3, 2), 1)],
-                        stack_dim=-1),
-                    groups=[(3, 1), (1, 1)],
-                    dim=-1),
-                dim=-1)
+            return vctorch.mul_along_dim(
+                scale,
+                vtorch.sum(
+                    vctorch.mul_along_dim(
+                        beta_w,
+                        vctorch.sum_multi(
+                            vctorch.mul_along_dim(
+                                vtorch.scatter(vtorch.ones((4,)), -1,
+                                               torch.tensor([0, 1, 2]),
+                                               dirichlet_w),
+                                vctorch.cdist_multi(
+                                    x1[..., indices]
+                                    / lengthscale[indices],
+                                    x2[..., indices]
+                                    / lengthscale[indices],
+                                    groups=[((1, 2), 3), ((3, 2), 1)]),
+                                dim=0),
+                            groups=[(3, 1), (1, 1)],
+                            dim=0),
+                        dim=0),
+                    dim=0),
+                dim=0)
 
         self._vectorize_test(example_inputs, kernel, expected)
 
@@ -492,7 +508,8 @@ class TestVexprTorchTests(unittest.TestCase):
                             x2[..., indices34],
                             groups=[((2, 1), 2)]))
                 ]),
-                torch.tensor([0, 2, 1, 3])
+                torch.tensor([0, 2, 1, 3]),
+                dim=0
             )
 
         self._vectorize_test(example_inputs, f, expected)
@@ -549,7 +566,8 @@ class TestVexprTorchTests(unittest.TestCase):
                     matern(vtorch.stack([a, b, c, a, b, c])),
                     vtorch.exp(-vtorch.stack([a, b, c, a, b, c]))
                 ]),
-                torch.tensor([0, 1, 2, 6, 7, 8, 3, 4, 5, 9, 10, 11])
+                torch.tensor([0, 1, 2, 6, 7, 8, 3, 4, 5, 9, 10, 11]),
+                dim=0
             )
 
         self._vectorize_test(example_inputs, f, expected)

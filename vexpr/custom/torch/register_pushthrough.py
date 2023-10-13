@@ -15,6 +15,7 @@ from vexpr.custom.torch.utils import (
 from vexpr.torch.utils import (
     invert_shuffle,
     canonical_axis,
+    canonical_stack_dim,
     maybe_lift_scatter,
     torch_stack_shape2,
     torch_cat_shape,
@@ -134,8 +135,8 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
         groups = groups,
     )
 
-    ndim = len(v.shape(expr))
-    if canonical_axis(cat_dim, ndim) != canonical_axis(-3, ndim):
+    ndim = len(v.shape(left))
+    if canonical_stack_dim(cat_dim, ndim) != canonical_stack_dim(-3, ndim):
         raise ValueError(
             f"cdist_multi always uses a stack_dim of -3, got {cat_dim}"
         )

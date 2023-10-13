@@ -16,6 +16,7 @@ from vexpr.custom.torch.utils import (
 )
 from vexpr.torch.utils import (
     canonical_axis,
+    canonical_stack_dim,
     invert_shuffle,
     torch_cat_shape,
     torch_stack_shape,
@@ -758,8 +759,8 @@ def push_stack_through_cdist(expr, allow_partial=True):
     kwargs = dict(
         groups = groups,
     )
-    ndim = len(v.shape(expr))
-    if canonical_axis(stack_dim, ndim) != canonical_axis(-3, ndim):
+    ndim = len(v.shape(left))
+    if canonical_stack_dim(stack_dim, ndim) != canonical_stack_dim(-3, ndim):
         raise ValueError(
             f"cdist_multi always uses a stack_dim of -3, got {stack_dim}"
         )
