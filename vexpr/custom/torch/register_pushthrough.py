@@ -15,6 +15,7 @@ from vexpr.custom.torch.utils import (
 from vexpr.torch.utils import (
     invert_shuffle,
     canonical_axis,
+    maybe_lift_scatter,
     torch_stack_shape2,
     torch_cat_shape,
     cat_remainder_then_combine,
@@ -284,16 +285,13 @@ def push_stack_through_mul_along_dim(expr, allow_partial=True):
         ones_shape = v.shape(w)[:-1] + (len(expr.args[0]),)
         indices = torch.tensor(actual_indices)
         batch_shape = v.shape(w)[:-1]
-        if len(batch_shape) > 0:
-            num_indices = indices.shape[-1]
-            indices = indices.view((1,) * len(batch_shape) + (num_indices,))
-            indices = vtorch.expand(indices, batch_shape + (num_indices,))
         w = v.with_return_shape(
-            vtorch.scatter(
+            maybe_lift_scatter(
                 v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
                 -1,
                 indices,
-                w),
+                w,
+                batch_shape=batch_shape),
             ones_shape)
 
     t = v._vectorize(
@@ -355,16 +353,13 @@ def push_cat_through_mul_along_dim(expr, allow_partial=True):
         ones_shape = v.shape(w)[:-1] + (total_n,)
         indices = torch.tensor(actual_indices)
         batch_shape = v.shape(w)[:-1]
-        if len(batch_shape) > 0:
-            num_indices = indices.shape[-1]
-            indices = indices.view((1,) * len(batch_shape) + (num_indices,))
-            indices = vtorch.expand(indices, batch_shape + (num_indices,))
         w = v.with_return_shape(
-            vtorch.scatter(
+            maybe_lift_scatter(
                 v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
                 -1,
                 indices,
-                w),
+                w,
+                batch_shape=batch_shape),
             ones_shape)
 
     t_shapes = [v.shape(t_expr) for t_expr in t]

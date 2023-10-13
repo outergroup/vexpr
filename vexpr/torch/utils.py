@@ -39,6 +39,44 @@ def canonical_axis(axis, ndim):
         return axis
 
 
+def maybe_lift_scatter(input, dim, index, src, batch_shape=()):
+    if (isinstance(src, vp.Vexpr)
+        and src.op == p.scatter_p
+        and src.args[1] == dim
+        and isinstance(input, vp.Vexpr)
+        and isinstance(src.args[0], vp.Vexpr)
+        and input.op == src.args[0].op
+        and input.op in (p.zeros_p, p.ones_p)):
+
+        # Include only the indices that actually correspond to values, not to
+        # filler zeros and ones.
+
+        give_up = False
+        inner_index = src.args[2]
+        if (len(batch_shape) > 0
+            and isinstance(inner_index, vp.Vexpr)
+            and inner_index.op == p.expand_p
+            and isinstance(inner_index.args[0], torch.Tensor)):
+            inner_index = inner_index.args[0].view(-1)
+        elif isinstance(inner_index, torch.Tensor):
+            pass
+        else:
+            give_up = True
+
+        if not give_up:
+            index = index[inner_index]
+            src = src.args[3]
+
+    if len(batch_shape) > 0:
+        num_indices = index.shape[-1]
+        index = index.view((1,) * len(batch_shape) + (num_indices,))
+        index = vtorch.expand(index, batch_shape + (num_indices,))
+
+    return v.with_return_shape(
+        vtorch.scatter(input, dim, index, src),
+        v.shape(input))
+
+
 def invert_shuffle(indices):
     inverted_indices = torch.zeros_like(torch.as_tensor(indices))
     inverted_indices[indices] = torch.arange(len(indices))
