@@ -17,5 +17,9 @@ def maybe_shuffle(expr, indices, dim=0):
         result = expr
     else:
         result = vctorch.shuffle(expr, indices, dim=dim)
+        try:
+            result = v.pushthrough(result, expr.op)
+        except v.CannotVectorize:
+            pass
 
     return v.with_return_shape(result, shape)

@@ -111,10 +111,13 @@ def pushthrough(expr, child_op, allow_partial=True):
 
     impl = pushthrough_impls.get((expr.op, child_op), None)
     if impl is None:
-        print("No vectorization support for", expr.op, child_op)
+        print("No pushthrough support for", expr.op, child_op)
         raise CannotVectorize()
 
     return impl(expr, allow_partial)
+
+def single_pushthrough(expr, allow_partial=True):
+    return pushthrough(expr, expr.args[0].op, allow_partial=allow_partial)
 
 
 ################################################################################

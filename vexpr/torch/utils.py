@@ -79,7 +79,10 @@ def maybe_lift_scatter(input, dim, index, src, batch_shape=()):
     if len(batch_shape) > 0:
         num_indices = index.shape[-1]
         index = index.view((1,) * len(batch_shape) + (num_indices,))
-        index = vtorch.expand(index, batch_shape + (num_indices,))
+        shape = batch_shape + (num_indices,)
+        index = v.with_return_shape(
+            vtorch.expand(index, shape),
+            shape)
 
     return v.with_return_shape(
         vtorch.scatter(input, dim, index, src),

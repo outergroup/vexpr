@@ -672,7 +672,9 @@ def push_cat_through_scatter(expr, allow_partial=True):
     if len(batch_shape) > 0:
         num_indices = indices.shape[-1]
         indices = indices.view((1,) * (len(batch_shape)) + (num_indices,))
-        indices = vtorch.expand(indices, batch_shape + (num_indices,))
+        shape = batch_shape + (num_indices,)
+        indices = v.with_return_shape(vtorch.expand(indices, shape),
+                                      shape)
     return v.with_return_shape(vtorch.scatter(into, dim, indices, sources),
                                into_shape)
 
@@ -789,3 +791,26 @@ def push_stack_through_cdist(expr, allow_partial=True):
         **expr.kwargs)
 
 v.pushthrough_impls[(p.stack_p, p.cdist_p)] = push_stack_through_cdist
+
+
+def push_index_select_through_expand(expr, allow_partial=True):
+    assert expr.op == p.index_select_p
+    assert isinstance(expr.args[2], vp.Vexpr) and expr.args[2].op == p.expand_p
+
+    expand_expr = expr.args[2]
+    t = expand_expr.args[0]
+    if isinstance(t, vp.Vexpr):
+        raise NotImplementedError()
+    elif isinstance(t, torch.Tensor):
+        t_shape = t.shape
+        t = torch.index_select(
+            expr.args[0], expr.args[1], t.view(-1)
+        ).view(t_shape)
+    else:
+        raise ValueError("expand arg 0 must be a Vexpr or a Tensor")
+
+    return v.with_return_shape(
+        vtorch.expand(t, expand_expr.args[1]),
+        v.shape(expand_expr))
+
+v.pushthrough_impls[(p.index_select_p, p.expand_p)] = push_index_select_through_expand

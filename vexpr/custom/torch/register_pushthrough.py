@@ -4,6 +4,7 @@ from functools import partial
 import torch
 
 import vexpr as vp
+import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as csp_p
 import vexpr.torch as vtorch
@@ -475,4 +476,183 @@ def push_concat_through_heads_tails(expr, allow_partial=True):
 
 v.pushthrough_impls.update({
     (p.cat_p, csp_p.heads_tails_p): push_concat_through_heads_tails
+})
+
+
+def push_shuffle_through_truediv(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == core.operator_truediv_p
+
+    indices = expr.args[1]
+
+    num, den = expr.args[0].args
+    num = v.pushthrough(
+        v.with_return_shape(vctorch.shuffle(num, indices, **expr.kwargs),
+                            v.shape(num)),
+        num.op)
+    den = v.pushthrough(
+        v.with_return_shape(vctorch.shuffle(den, indices, **expr.kwargs),
+                            v.shape(den)),
+        den.op)
+
+    return v.with_return_shape(
+        num / den,
+        v.shape(expr.args[0])
+    )
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, core.operator_truediv_p): push_shuffle_through_truediv,
+})
+
+
+def push_shuffle_through_mul_along_dim(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == csp_p.mul_along_dim_p
+
+    indices = expr.args[1]
+
+    w, t = expr.args[0].args
+    w = v.pushthrough(
+        v.with_return_shape(vctorch.shuffle(w, indices, dim=-1),
+                            v.shape(w)),
+        w.op)
+    t = v.pushthrough(
+        v.with_return_shape(vctorch.shuffle(t, indices, **expr.kwargs),
+                            v.shape(t)),
+        t.op)
+
+    return v.with_return_shape(
+        vctorch.mul_along_dim(w, t, **expr.args[0].kwargs),
+        v.shape(expr.args[0])
+    )
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, csp_p.mul_along_dim_p): push_shuffle_through_mul_along_dim,
+})
+
+
+def push_shuffle_through_index_select(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == p.index_select_p
+
+    shuffle_indices = expr.args[1]
+    shuffle_dim = expr.kwargs.get("dim", 0)
+
+    input, dim, index = expr.args[0].args
+    assert dim == shuffle_dim
+    index = index.index_select(dim, shuffle_indices)
+
+    return v.with_return_shape(
+        vtorch.index_select(input, dim, index),
+        v.shape(expr.args[0])
+    )
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, p.index_select_p): push_shuffle_through_index_select,
+})
+
+
+def push_shuffle_through_unsqueeze(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == p.unsqueeze_p
+    unsqueeze_expr = expr.args[0]
+    return v.with_return_shape(
+        vtorch.unsqueeze(
+            v.single_pushthrough(
+                vctorch.shuffle(unsqueeze_expr.args[0],
+                                expr.args[1],
+                                **expr.kwargs)),
+            unsqueeze_expr.args[1]),
+        v.shape(expr.args[0]))
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, p.unsqueeze_p): push_shuffle_through_unsqueeze,
+})
+
+def identity_pushthrough(expr, allow_partial=True):
+    return expr
+
+def destroy_shuffle_pushthrough(expr, allow_partial=True):
+    return expr.args[0]
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, csp_p.cdist_multi_p): identity_pushthrough,
+    (csp_p.shuffle_p, csp_p.sum_multi_p): identity_pushthrough,
+    (csp_p.shuffle_p, csp_p.fast_prod_positive_multi_p): identity_pushthrough,
+    (csp_p.shuffle_p, p.cat_p): identity_pushthrough,
+    (csp_p.shuffle_p, p.zeros_p): destroy_shuffle_pushthrough,
+    (csp_p.shuffle_p, p.ones_p): destroy_shuffle_pushthrough,
+})
+
+def push_shuffle_through_unary_elementwise(op, expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == op
+    child_expr = expr.args[0]
+    shape = v.shape(child_expr)
+    return v.with_return_shape(
+        vp.Vexpr(
+            op,
+            (v.single_pushthrough(
+                v.with_return_shape(
+                    vctorch.shuffle(child_expr.args[0],
+                                    expr.args[1],
+                                    **expr.kwargs),
+                    shape)),
+             ),
+            child_expr.kwargs),
+        shape)
+
+def push_shuffle_through_scatter(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == p.scatter_p
+    scatter_expr = expr.args[0]
+    input, dim, index, src = scatter_expr.args
+
+    if isinstance(input, vp.Vexpr):
+        input = v.single_pushthrough(
+            vctorch.shuffle(input, expr.args[1], **expr.kwargs))
+    elif isinstance(input, torch.Tensor):
+        input = input.index_select(expr.get("dim", 0), expr.args[1])
+    else:
+        raise ValueError(f"Unexpected input type {type(input)}")
+
+    unshuffle_indices = invert_shuffle(expr.args[1])
+    if isinstance(index, vp.Vexpr):
+        index = v.pushthrough(
+            vtorch.index_select(unshuffle_indices,
+                                expr.kwargs.get("dim", 0), index),
+            index.op
+        )
+    elif isinstance(index, torch.Tensor):
+        index = unshuffle_indices.index_select(expr.get("dim", 0), index)
+    else:
+        raise ValueError(f"Unexpected index type {type(index)}")
+
+    shape = v.shape(scatter_expr)
+    return v.with_return_shape(
+        vtorch.scatter(
+            input,
+            dim,
+            index,
+            src
+        ),
+        shape)
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, p.scatter_p): push_shuffle_through_scatter,
+})
+
+def push_shuffle_through_shuffle(expr, allow_partial=True):
+    assert expr.op == csp_p.shuffle_p
+    assert expr.args[0].op == csp_p.shuffle_p
+    # Reuse logic that collapses shuffles.
+    expr = maybe_shuffle(expr.args[0], expr.args[1], **expr.kwargs)
+    if isinstance(expr.args[0], vp.Vexpr) and expr.op == csp_p.shuffle_p:
+        return v.with_return_shape(v.single_pushthrough(expr),
+                                   v.shape(expr))
+    else:
+        return expr
+
+v.pushthrough_impls.update({
+    (csp_p.shuffle_p, csp_p.shuffle_p): push_shuffle_through_shuffle,
 })
