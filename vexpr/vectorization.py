@@ -120,6 +120,17 @@ def single_pushthrough(expr, allow_partial=True):
     return pushthrough(expr, expr.args[0].op, allow_partial=allow_partial)
 
 
+# {(op, child_op): f(expr)}
+lift_impls = {}
+
+def lift(expr, child_op):
+    impl = lift_impls.get((expr.op, child_op), None)
+    if impl is None:
+        print("No lift support for", expr.op, child_op)
+        raise CannotVectorize()
+
+    return impl(expr)
+
 ################################################################################
 # Vectorize implementations for operators
 ################################################################################

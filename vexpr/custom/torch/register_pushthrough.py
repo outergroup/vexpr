@@ -624,7 +624,7 @@ def push_shuffle_through_scatter(expr, allow_partial=True):
             index.op
         )
     elif isinstance(index, torch.Tensor):
-        index = unshuffle_indices.index_select(expr.get("dim", 0), index)
+        index = unshuffle_indices.index_select(expr.kwargs.get("dim", 0), index)
     else:
         raise ValueError(f"Unexpected index type {type(index)}")
 
