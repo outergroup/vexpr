@@ -6,11 +6,12 @@ import torch
 import vexpr as vp
 import vexpr.core as core
 import vexpr.custom.torch as vctorch
-import vexpr.custom.torch.primitives as csp_p
+import vexpr.custom.torch.primitives as cp
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import (
+    maybe_index_select,
     maybe_shuffle,
 )
 from vexpr.torch.utils import (
@@ -33,7 +34,7 @@ def push_cat_through_shuffle(expr, allow_partial=True):
     # get a list of shuffles with the same dim by wrapping everything else with
     # identity shuffles
     child_exprs = [(child_expr
-                    if child_expr.op == csp_p.shuffle_p
+                    if child_expr.op == cp.shuffle_p
                     and child_expr.kwargs.get("dim", 0) == cat_dim
                     else v.with_return_shape(vctorch.shuffle(
                             child_expr,
@@ -65,7 +66,7 @@ def push_cat_through_shuffle(expr, allow_partial=True):
     return maybe_shuffle(ret, indices, **expr.kwargs)
 
 
-v.pushthrough_impls[(p.cat_p, csp_p.shuffle_p)] = push_cat_through_shuffle
+v.pushthrough_impls[(p.cat_p, cp.shuffle_p)] = push_cat_through_shuffle
 
 
 def push_cat_through_cdist_multi(expr, allow_partial=True):
@@ -75,7 +76,7 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
 
     all_groups = [child_expr.kwargs["groups"]
                   for child_expr in expr.args[0]
-                  if child_expr.op == csp_p.cdist_multi_p]
+                  if child_expr.op == cp.cdist_multi_p]
 
     groups = collections.Counter()
     for group in all_groups:
@@ -93,7 +94,7 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
     for child_expr in expr.args[0]:
         num_indices = v.shape(child_expr)[cat_dim]
         result_indices = list(range(base, base + num_indices))
-        if child_expr.op == csp_p.cdist_multi_p:
+        if child_expr.op == cp.cdist_multi_p:
             applicable_indices += result_indices
             applicable_exprs.append(child_expr)
             left.append(child_expr.args[0])
@@ -160,7 +161,7 @@ def push_cat_through_cdist_multi(expr, allow_partial=True):
         **expr.kwargs)
 
 
-v.pushthrough_impls[(p.cat_p, csp_p.cdist_multi_p)] = push_cat_through_cdist_multi
+v.pushthrough_impls[(p.cat_p, cp.cdist_multi_p)] = push_cat_through_cdist_multi
 
 
 def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
@@ -234,15 +235,15 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
 
 
 v.pushthrough_impls.update({
-    (p.cat_p, csp_p.sum_multi_p): partial(
-        push_cat_through_reduction_multi, csp_p.sum_multi_p, vctorch.sum_multi, 0.),
-    (p.cat_p, csp_p.prod_multi_p): partial(
-        push_cat_through_reduction_multi, csp_p.prod_multi_p, vctorch.prod_multi, 1.),
-    (p.cat_p, csp_p.fast_prod_positive_multi_p): partial(
-        push_cat_through_reduction_multi, csp_p.fast_prod_positive_multi_p,
+    (p.cat_p, cp.sum_multi_p): partial(
+        push_cat_through_reduction_multi, cp.sum_multi_p, vctorch.sum_multi, 0.),
+    (p.cat_p, cp.prod_multi_p): partial(
+        push_cat_through_reduction_multi, cp.prod_multi_p, vctorch.prod_multi, 1.),
+    (p.cat_p, cp.fast_prod_positive_multi_p): partial(
+        push_cat_through_reduction_multi, cp.fast_prod_positive_multi_p,
         vctorch.fast_prod_positive_multi, 1.),
-    (p.stack_p, csp_p.fast_prod_positive_p): partial(
-        push_stack_through_reduction, csp_p.fast_prod_positive_p,
+    (p.stack_p, cp.fast_prod_positive_p): partial(
+        push_stack_through_reduction, cp.fast_prod_positive_p,
         vctorch.fast_prod_positive_multi, 1.)
 })
 
@@ -255,7 +256,7 @@ def push_stack_through_mul_along_dim(expr, allow_partial=True):
     mul_along_dim_dims = [child_expr.kwargs.get("dim", None)
                           for child_expr in expr.args[0]
                           if isinstance(child_expr, vp.Vexpr)
-                          and child_expr.op == csp_p.mul_along_dim_p]
+                          and child_expr.op == cp.mul_along_dim_p]
     assert all(dim == mul_along_dim_dims[0] for dim in mul_along_dim_dims)
     mul_along_dim_dim = mul_along_dim_dims[0]
 
@@ -265,7 +266,7 @@ def push_stack_through_mul_along_dim(expr, allow_partial=True):
     actual_indices = []
     for i, child_expr in enumerate(expr.args[0]):
         if isinstance(child_expr, vp.Vexpr) \
-           and child_expr.op == csp_p.mul_along_dim_p:
+           and child_expr.op == cp.mul_along_dim_p:
             w.append(child_expr.args[0])
             t.append(child_expr.args[1])
             actual_indices.append(i)
@@ -304,16 +305,23 @@ def push_stack_through_mul_along_dim(expr, allow_partial=True):
 
     dim = expr.kwargs.get("dim", 0)
     ndim = len(v.shape(t))
-
     assert canonical_axis(dim, ndim) == canonical_axis(mul_along_dim_dim, ndim)
 
-    return v.with_return_shape(vctorch.mul_along_dim(w, t,
-                                                     dim=mul_along_dim_dim),
-                               v.shape(t))
+    ret = v.with_return_shape(vctorch.mul_along_dim(w, t,
+                                                    dim=mul_along_dim_dim),
+                              v.shape(t))
+
+    # now push mul_along_dim through as low as it can go.
+    try:
+        ret = v.pushthrough(ret, t.op)
+    except v.CannotVectorize:
+        pass
+
+    return ret
 
 
 v.pushthrough_impls.update({
-    (p.stack_p, csp_p.mul_along_dim_p): push_stack_through_mul_along_dim
+    (p.stack_p, cp.mul_along_dim_p): push_stack_through_mul_along_dim
 })
 
 
@@ -325,7 +333,7 @@ def push_cat_through_mul_along_dim(expr, allow_partial=True):
     mul_along_dim_dims = [child_expr.kwargs.get("dim", None)
                           for child_expr in expr.args[0]
                           if isinstance(child_expr, vp.Vexpr)
-                          and child_expr.op == csp_p.mul_along_dim_p]
+                          and child_expr.op == cp.mul_along_dim_p]
     assert all(dim == mul_along_dim_dims[0] for dim in mul_along_dim_dims)
     mul_along_dim_dim = mul_along_dim_dims[0]
 
@@ -337,7 +345,7 @@ def push_cat_through_mul_along_dim(expr, allow_partial=True):
     for child_expr in expr.args[0]:
         n = v.shape(child_expr)[cat_dim]
         if isinstance(child_expr, vp.Vexpr) \
-           and child_expr.op == csp_p.mul_along_dim_p:
+           and child_expr.op == cp.mul_along_dim_p:
             w.append(child_expr.args[0])
             t.append(child_expr.args[1])
             actual_indices += list(range(base, base + n))
@@ -369,12 +377,20 @@ def push_cat_through_mul_along_dim(expr, allow_partial=True):
                                          torch_cat_shape(t_shapes,
                                                          dim=cat_dim)))
 
-    return v.with_return_shape(
+    ret = v.with_return_shape(
         vctorch.mul_along_dim(w, t, dim=mul_along_dim_dim),
         v.shape(t))
 
+    # now push mul_along_dim through as low as it can go.
+    try:
+        ret = v.pushthrough(ret, t.op)
+    except v.CannotVectorize:
+        pass
+
+    return ret
+
 v.pushthrough_impls.update({
-    (p.cat_p, csp_p.mul_along_dim_p): push_cat_through_mul_along_dim
+    (p.cat_p, cp.mul_along_dim_p): push_cat_through_mul_along_dim
 })
 
 
@@ -426,12 +442,12 @@ def parallel_prod(num_reductions, dim, index, source):
                                           "prod")
 
 v.pushthrough_impls.update({
-    (p.cat_p, csp_p.index_add_into_zeros_p): partial(
-        push_cat_through_index_reduction_into, csp_p.index_add_into_zeros_p,
+    (p.cat_p, cp.index_add_into_zeros_p): partial(
+        push_cat_through_index_reduction_into, cp.index_add_into_zeros_p,
         parallel_sum),
     # TODO this is hardcoded to prod, but index reduce might use e.g. mean
-    (p.cat_p, csp_p.index_reduce_into_ones_p): partial(
-        push_cat_through_index_reduction_into, csp_p.index_reduce_into_ones_p,
+    (p.cat_p, cp.index_reduce_into_ones_p): partial(
+        push_cat_through_index_reduction_into, cp.index_reduce_into_ones_p,
         parallel_prod),
 })
 
@@ -440,7 +456,7 @@ def push_concat_through_heads_tails(expr, allow_partial=True):
     assert expr.op == p.cat_p
 
     if not all(isinstance(child_expr, vp.Vexpr)
-               and child_expr.op == csp_p.heads_tails_p
+               and child_expr.op == cp.heads_tails_p
                for child_expr in expr.args[0]):
         print("Warning: giving up on pushing concat through heads_tails")
         return expr
@@ -452,7 +468,7 @@ def push_concat_through_heads_tails(expr, allow_partial=True):
     alphas = []
     for child_expr in expr.args[0]:
         if (not isinstance(child_expr, vp.Vexpr)
-            or child_expr.op != csp_p.heads_tails_p):
+            or child_expr.op != cp.heads_tails_p):
             raise NotImplementedError()
 
         alpha = child_expr.args[0]
@@ -475,12 +491,12 @@ def push_concat_through_heads_tails(expr, allow_partial=True):
                                                dim=cat_dim))
 
 v.pushthrough_impls.update({
-    (p.cat_p, csp_p.heads_tails_p): push_concat_through_heads_tails
+    (p.cat_p, cp.heads_tails_p): push_concat_through_heads_tails
 })
 
 
 def push_shuffle_through_truediv(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
     assert expr.args[0].op == core.operator_truediv_p
 
     indices = expr.args[1]
@@ -501,13 +517,13 @@ def push_shuffle_through_truediv(expr, allow_partial=True):
     )
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, core.operator_truediv_p): push_shuffle_through_truediv,
+    (cp.shuffle_p, core.operator_truediv_p): push_shuffle_through_truediv,
 })
 
 
 def push_shuffle_through_mul_along_dim(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
-    assert expr.args[0].op == csp_p.mul_along_dim_p
+    assert expr.op == cp.shuffle_p
+    assert expr.args[0].op == cp.mul_along_dim_p
 
     indices = expr.args[1]
 
@@ -527,12 +543,12 @@ def push_shuffle_through_mul_along_dim(expr, allow_partial=True):
     )
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, csp_p.mul_along_dim_p): push_shuffle_through_mul_along_dim,
+    (cp.shuffle_p, cp.mul_along_dim_p): push_shuffle_through_mul_along_dim,
 })
 
 
 def push_shuffle_through_index_select(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
     assert expr.args[0].op == p.index_select_p
 
     shuffle_indices = expr.args[1]
@@ -542,18 +558,15 @@ def push_shuffle_through_index_select(expr, allow_partial=True):
     assert dim == shuffle_dim
     index = index.index_select(dim, shuffle_indices)
 
-    return v.with_return_shape(
-        vtorch.index_select(input, dim, index),
-        v.shape(expr.args[0])
-    )
+    return maybe_index_select(input, dim, index)
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, p.index_select_p): push_shuffle_through_index_select,
+    (cp.shuffle_p, p.index_select_p): push_shuffle_through_index_select,
 })
 
 
 def push_shuffle_through_unsqueeze(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
     assert expr.args[0].op == p.unsqueeze_p
     unsqueeze_expr = expr.args[0]
     return v.with_return_shape(
@@ -566,7 +579,7 @@ def push_shuffle_through_unsqueeze(expr, allow_partial=True):
         v.shape(expr.args[0]))
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, p.unsqueeze_p): push_shuffle_through_unsqueeze,
+    (cp.shuffle_p, p.unsqueeze_p): push_shuffle_through_unsqueeze,
 })
 
 def identity_pushthrough(expr, allow_partial=True):
@@ -576,16 +589,16 @@ def destroy_shuffle_pushthrough(expr, allow_partial=True):
     return expr.args[0]
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, csp_p.cdist_multi_p): identity_pushthrough,
-    (csp_p.shuffle_p, csp_p.sum_multi_p): identity_pushthrough,
-    (csp_p.shuffle_p, csp_p.fast_prod_positive_multi_p): identity_pushthrough,
-    (csp_p.shuffle_p, p.cat_p): identity_pushthrough,
-    (csp_p.shuffle_p, p.zeros_p): destroy_shuffle_pushthrough,
-    (csp_p.shuffle_p, p.ones_p): destroy_shuffle_pushthrough,
+    (cp.shuffle_p, cp.cdist_multi_p): identity_pushthrough,
+    (cp.shuffle_p, cp.sum_multi_p): identity_pushthrough,
+    (cp.shuffle_p, cp.fast_prod_positive_multi_p): identity_pushthrough,
+    (cp.shuffle_p, p.cat_p): identity_pushthrough,
+    (cp.shuffle_p, p.zeros_p): destroy_shuffle_pushthrough,
+    (cp.shuffle_p, p.ones_p): destroy_shuffle_pushthrough,
 })
 
 def push_shuffle_through_unary_elementwise(op, expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
     assert expr.args[0].op == op
     child_expr = expr.args[0]
     shape = v.shape(child_expr)
@@ -603,7 +616,7 @@ def push_shuffle_through_unary_elementwise(op, expr, allow_partial=True):
         shape)
 
 def push_shuffle_through_scatter(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
     assert expr.args[0].op == p.scatter_p
     scatter_expr = expr.args[0]
     input, dim, index, src = scatter_expr.args
@@ -639,20 +652,243 @@ def push_shuffle_through_scatter(expr, allow_partial=True):
         shape)
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, p.scatter_p): push_shuffle_through_scatter,
+    (cp.shuffle_p, p.scatter_p): push_shuffle_through_scatter,
 })
 
 def push_shuffle_through_shuffle(expr, allow_partial=True):
-    assert expr.op == csp_p.shuffle_p
-    assert expr.args[0].op == csp_p.shuffle_p
+    assert expr.op == cp.shuffle_p
+    assert expr.args[0].op == cp.shuffle_p
     # Reuse logic that collapses shuffles.
     expr = maybe_shuffle(expr.args[0], expr.args[1], **expr.kwargs)
-    if isinstance(expr.args[0], vp.Vexpr) and expr.op == csp_p.shuffle_p:
+    if isinstance(expr.args[0], vp.Vexpr) and expr.op == cp.shuffle_p:
         return v.with_return_shape(v.single_pushthrough(expr),
                                    v.shape(expr))
     else:
         return expr
 
 v.pushthrough_impls.update({
-    (csp_p.shuffle_p, csp_p.shuffle_p): push_shuffle_through_shuffle,
+    (cp.shuffle_p, cp.shuffle_p): push_shuffle_through_shuffle,
 })
+
+
+def raise_cannot_vectorize(expr, allow_partial=True):
+    raise v.CannotVectorize
+
+
+
+v.pushthrough_impls.update({
+    (cp.mul_along_dim_p, cp.cdist_multi_p): raise_cannot_vectorize,
+    (cp.mul_along_dim_p, p.exp_p): raise_cannot_vectorize,
+    (cp.mul_along_dim_p, p.cat_p): raise_cannot_vectorize,
+})
+
+
+def push_mul_along_dim_through_mul_along_dim(expr, allow_partial=True):
+    assert expr.op == cp.mul_along_dim_p
+    w, t = expr.args
+    assert t.op == cp.mul_along_dim_p
+
+    outer_dim = expr.kwargs.get("dim", 0)
+    inner_dim = expr.kwargs.get("dim", 0)
+    assert outer_dim == inner_dim
+
+    inner_w, inner_t = t.args
+
+    expr = v.with_return_shape(
+        vctorch.mul_along_dim(
+            v.with_return_shape(
+                vctorch.mul_along_dim(
+                    w, inner_w,
+                    dim=-1),
+                v.shape(inner_t)),
+            inner_t,
+            **t.kwargs
+        ),
+        v.shape(inner_t))
+
+    try:
+        expr = v.pushthrough(expr, inner_t.op)
+    except v.CannotVectorize:
+        # we've successfully merged two mul_along_dim operations, so this
+        # pushthrough had a benefit. Catch the exception here and don't rethrow.
+        pass
+    return expr
+
+
+def push_mul_along_dim_through_sum(expr, allow_partial=True):
+    assert expr.op == cp.mul_along_dim_p
+    w, t = expr.args
+    assert t.op == p.sum_p
+
+    sum_dim = t.kwargs.get("dim", None)
+    mul_along_dim_dim = expr.kwargs.get("dim", 0)
+    assert sum_dim == mul_along_dim_dim
+
+    sum_children = t.args[0]
+
+    # it would sometimes be faster to do vtorch.unsqueeze(w, -1) instead of the
+    # expand below, but other pushthrough logic wants to be able to select
+    # weights by index.
+    expand_shape = v.shape(w) + (v.shape(sum_children)[sum_dim],)
+    multiplied_children = v.with_return_shape(
+        vctorch.mul_along_dim(
+            v.with_return_shape(
+                vtorch.expand(vtorch.unsqueeze(w, -1), expand_shape),
+                expand_shape
+            ),
+            sum_children,
+            **expr.kwargs),
+        v.shape(sum_children)
+    )
+    multiplied_children = v.pushthrough(multiplied_children,
+                                        sum_children.op)
+
+    expr = v.with_return_shape(
+        vtorch.sum(multiplied_children, **t.kwargs),
+        v.shape(expr)
+    )
+
+    sum_children = expr.args[0]
+    while isinstance(sum_children, vp.Vexpr) and sum_children.op == cp.sum_multi_p:
+        # eat this sum_multi, it's all just one sum now
+        sum_children = sum_children.args[0]
+        expr = v.with_return_shape(
+            vtorch.sum(sum_children, **t.kwargs),
+            v.shape(expr)
+        )
+
+        # then do a shuffle lift and destroy it, since order doesn't matter
+        # during sum
+        try:
+            sum_children = v.lift(expr.args[0], cp.shuffle_p)
+            while sum_children.op == cp.shuffle_p:
+                sum_children = sum_children.args[0]
+                expr = v.with_return_shape(
+                    vtorch.sum(sum_children, **t.kwargs),
+                    v.shape(expr)
+                )
+                sum_children = v.lift(sum_children, cp.shuffle_p)
+        except v.CannotVectorize:
+            pass
+
+    return expr
+
+
+def push_mul_along_dim_through_sum_multi(expr, allow_partial=True):
+    assert expr.op == cp.mul_along_dim_p
+    w, t = expr.args
+    assert t.op == cp.sum_multi_p
+
+    # Repeat weights using index_select. We could try changing this to
+    # repeat_interleave.
+    indices = []
+    i = 0
+    for d, n in t.kwargs["groups"]:
+        for _ in range(n):
+            indices += [i] * d
+            i += 1
+    indices = torch.tensor(indices)
+    w = maybe_index_select(w, -1, indices)
+
+    sum_children = v.with_return_shape(
+        vctorch.mul_along_dim(
+            w,
+            t.args[0],
+            **expr.kwargs),
+        v.shape(t.args[0])
+    )
+
+    sum_children = v.pushthrough(sum_children, sum_children.args[1].op)
+
+    ret = v.with_return_shape(
+        vctorch.sum_multi(
+            sum_children,
+            **t.kwargs),
+        v.shape(expr))
+
+    # TODO now check if the children are a sum_multi and fold them in if so
+
+    # TODO and that should include if the next reduction is a sum_multi. so this
+    # is an opportunity to crush any shuffles in the middle.
+    return ret
+
+
+def push_mul_along_dim_through_fast_prod_positive_multi(expr, allow_partial=True):
+    assert expr.op == cp.mul_along_dim_p
+    w, t = expr.args
+    assert t.op == cp.fast_prod_positive_multi_p
+
+    base = 0
+    scatter_indices = []
+    for d, n in t.kwargs["groups"]:
+        # insert to the first element of every prod
+        scatter_indices.append(torch.arange(base, base + d * n, d))
+        base += d * n
+    tot = base
+    scatter_indices = torch.cat(scatter_indices)
+    batch_shape = v.shape(w)[:-1]
+    ones_shape = batch_shape + (tot,)
+    w = maybe_lift_scatter(
+        v.with_return_shape(
+            vtorch.ones(ones_shape),
+            ones_shape),
+        -1, scatter_indices, w, batch_shape=batch_shape)
+
+    prod_children = v.with_return_shape(
+        vctorch.mul_along_dim(
+            w,
+            t.args[0],
+            **expr.kwargs),
+        v.shape(t.args[0])
+    )
+
+    prod_children = v.pushthrough(prod_children, prod_children.args[1].op)
+
+    ret = v.with_return_shape(
+        vctorch.fast_prod_positive_multi(
+            prod_children,
+            **t.kwargs),
+        v.shape(expr))
+
+    # TODO now check if the children are a fast_prod_positive_multi and fold
+    # them in if so
+    return ret
+
+
+def push_mul_along_dim_through_shuffle(expr, allow_partial=True):
+    assert expr.op == cp.mul_along_dim_p
+    w, t = expr.args
+    assert t.op == cp.shuffle_p
+
+    # apply inverted shuffle to w
+    w = v.with_return_shape(
+        vctorch.shuffle(w, invert_shuffle(t.args[1]), dim=-1),
+        v.shape(w))
+
+    expr = v.with_return_shape(
+        vctorch.mul_along_dim(w, t.args[0], **expr.kwargs),
+        v.shape(expr))
+    expr = v.pushthrough(expr, expr.args[1].op)
+
+    return v.with_return_shape(
+        vctorch.shuffle(expr, t.args[1], **t.kwargs),
+        v.shape(expr))
+
+
+v.pushthrough_impls.update({
+    (cp.mul_along_dim_p, cp.mul_along_dim_p): push_mul_along_dim_through_mul_along_dim,
+    (cp.mul_along_dim_p, p.sum_p): push_mul_along_dim_through_sum,
+})
+
+if vctorch.constants.enable_extended_multiply_pushing:
+    v.pushthrough_impls.update({
+        (cp.mul_along_dim_p, cp.sum_multi_p): push_mul_along_dim_through_sum_multi,
+        (cp.mul_along_dim_p, cp.fast_prod_positive_multi_p): push_mul_along_dim_through_fast_prod_positive_multi,
+        (cp.mul_along_dim_p, cp.shuffle_p): push_mul_along_dim_through_shuffle,
+    })
+else:
+    v.pushthrough_impls.update({
+        (cp.mul_along_dim_p, cp.sum_multi_p): raise_cannot_vectorize,
+        (cp.mul_along_dim_p, cp.fast_prod_positive_multi_p): raise_cannot_vectorize,
+        (cp.mul_along_dim_p, cp.shuffle_p): raise_cannot_vectorize,
+    })

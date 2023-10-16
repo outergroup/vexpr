@@ -111,6 +111,8 @@ def mul_along_dim_impl(w, t, dim=0):
     with torch.profiler.record_function("mul_along_dim"):
         new_shape = [1] * t.dim()
         w_n = len(w.shape)
+        if dim < 0:
+            dim += t.dim()
         new_shape[dim - w_n + 1 : dim + 1] = w.shape
         return w.view(new_shape) * t
 

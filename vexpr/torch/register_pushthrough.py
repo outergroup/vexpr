@@ -6,12 +6,13 @@ import torch
 import vexpr as vp
 import vexpr.core as core
 import vexpr.custom.torch as vctorch
-import vexpr.custom.torch.primitives as csp_p
+import vexpr.custom.torch.primitives as cp
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.vectorization import _vectorize, with_metadata
 from vexpr.custom.torch.utils import (
+    maybe_index_select,
     maybe_shuffle,
 )
 from vexpr.torch.utils import (
@@ -27,9 +28,7 @@ from vexpr.torch.utils import (
 )
 
 
-def push_cat_through_index_select(expr, allow_partial=True):
-    assert expr.op == p.cat_p
-
+def push_cat_through_index_select_symbols(expr, allow_partial=True):
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
     # they are the same symbol.
     if not all(sub_expr.op == p.index_select_p
@@ -80,6 +79,59 @@ def push_cat_through_index_select(expr, allow_partial=True):
     return v.with_return_shape(
         vtorch.index_select(select_target, dim, indices),
         return_shape)
+
+
+def push_cat_through_index_select(expr, allow_partial=True):
+    assert expr.op == p.cat_p
+
+    if any(child_expr.op == p.index_select_p
+           and child_expr.args[0].op == core.symbol_p
+           for child_expr in expr.args[0]):
+        return push_cat_through_index_select_symbols(expr, allow_partial)
+
+    cat_dim = expr.kwargs.get("dim", 0)
+
+    # get a list of index_selects with the same dim by wrapping everything else
+    # with identity shuffles
+    child_exprs = [(child_expr
+                    if child_expr.op == p.index_select_p
+                    and child_expr.args[1] == cat_dim
+                    else v.with_return_shape(
+                            vtorch.index_select(
+                                child_expr,
+                                cat_dim,
+                                torch.arange(v.shape(child_expr)[cat_dim])),
+                            v.shape(child_expr)))
+                   for child_expr in expr.args[0]]
+
+    target = []
+    indices = []
+    base = 0
+    for child_expr in child_exprs:
+        target.append(child_expr.args[0])
+        child_indices = child_expr.args[2]
+        indices.append(child_indices + base)
+        base += v.shape(child_expr.args[0])[cat_dim]
+
+    result_shape = torch_cat_shape([v.shape(child_expr)
+                                    for child_expr in child_exprs],
+                                   cat_dim)
+
+    target = v._vectorize(
+        v.with_return_shape(
+            vtorch.cat(target, **expr.kwargs),
+            result_shape
+        )
+    )
+    indices = torch.cat(indices)
+
+    cat_dim_positive = (cat_dim
+                        if cat_dim >= 0
+                        else cat_dim + len(v.shape(target)))
+    ret_shape = (v.shape(target)[:cat_dim_positive]
+                 + (len(indices),)
+                 + v.shape(target)[cat_dim_positive + 1:])
+    return maybe_index_select(target, cat_dim, indices)
 
 
 v.pushthrough_impls.update({
@@ -685,8 +737,8 @@ v.pushthrough_impls.update({
                                   vctorch.sum_multi, 0.),
     (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
                                    vctorch.prod_multi, 1.),
-    (p.stack_p, csp_p.fast_prod_positive_p): partial(
-        push_stack_through_reduction, csp_p.fast_prod_positive_p,
+    (p.stack_p, cp.fast_prod_positive_p): partial(
+        push_stack_through_reduction, cp.fast_prod_positive_p,
         vctorch.fast_prod_positive_multi, 1.),
     (p.cat_p, p.index_add_p): partial(push_cat_through_index_reduction,
                                       p.index_add_p,

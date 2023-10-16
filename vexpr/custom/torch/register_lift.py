@@ -18,6 +18,7 @@ def lift_return_self(expr):
 v.lift_impls.update({
     (cp.cdist_multi_p, cp.shuffle_p): lift_return_self,
     (cp.sum_multi_p, cp.shuffle_p): lift_return_self,
+    (cp.fast_prod_positive_multi_p, cp.shuffle_p): lift_return_self,
     (cp.shuffle_p, cp.shuffle_p): lift_return_self,
 })
 
@@ -52,10 +53,17 @@ def lift_shuffle_from_cat(expr):
                 altered_child_exprs.append(child_expr)
             base += n
         outer_indices = torch.cat(outer_indices)
-        expr = vctorch.shuffle(
-            vtorch.cat(altered_child_exprs, **expr.kwargs),
-            outer_indices,
-            **expr.kwargs)
+        expr = v.with_return_shape(
+            vctorch.shuffle(
+                v.with_return_shape(
+                    vtorch.cat(altered_child_exprs, **expr.kwargs),
+                    v.shape(expr)
+                ),
+                outer_indices,
+                **expr.kwargs
+            ),
+            v.shape(expr)
+        )
 
     return expr
 
