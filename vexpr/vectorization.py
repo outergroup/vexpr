@@ -1,3 +1,6 @@
+from functools import partial
+
+import vexpr as vp
 from vexpr import Vexpr, core
 
 ################################################################################
@@ -131,6 +134,60 @@ def lift(expr, child_op):
 
     return impl(expr)
 
+
+unary_elementwise_registration_steps = []
+
+def register_unary_elementwise_op(op):
+    for register in unary_elementwise_registration_steps:
+        register(op)
+
+
+def _vectorize2(expr):
+    """
+    Function that orchestrates the vectorization process.
+    """
+    while True:
+        iteration_prev_expr = expr
+        group_i = 0
+        while group_i < len(phase_ops):
+            group_prev_expr = expr
+            expr = recursive_pushthrough(phase_ops[group_i], expr)
+            if vp.comparable(expr) == vp.comparable(group_prev_expr):
+                group_i += 1
+        if vp.comparable(expr) == vp.comparable(iteration_prev_expr):
+            break
+
+    return expr
+
+
+# Each phase is a list of (op, pushthrough) pairs
+phase_ops = [
+    # stack
+    [],
+    # concatenate, stack, index_select, shuffle
+    [],
+    # multiply
+    [],
+]
+
+def recursive_pushthrough(ops, expr):
+    transform = partial(recursive_pushthrough, ops)
+    ops = dict(ops)
+
+    if expr.op in ops:
+        pushthrough = ops[expr.op]
+        try:
+            return pushthrough(expr, transform)
+        except CannotVectorize:
+            pass
+
+    return with_return_shape(
+        Vexpr(expr.op,
+              recursively_transform_args(expr.args, transform),
+              expr.kwargs),
+        shape(expr))
+
+
 ################################################################################
 # Vectorize implementations for operators
 ################################################################################
@@ -166,33 +223,46 @@ class CannotVectorize(Exception):
 ################################################################################
 
 
-def args_with_stripped_metadata(args):
+def recursively_transform_args(args, transform):
     new_args = []
     for arg in args:
         if isinstance(arg, Vexpr):
-            arg = strip_metadata(arg)
+            arg = transform(arg)
         elif isinstance(arg, (list, tuple)):
-            arg = args_with_stripped_metadata(arg)
+            arg = recursively_transform_args(arg, transform)
         new_args.append(arg)
     return type(args)(new_args)
 
 
 def strip_metadata(expr):
-    return Vexpr(expr.op, args_with_stripped_metadata(expr.args), expr.kwargs)
+    return Vexpr(expr.op, recursively_transform_args(expr.args,
+                                                     strip_metadata),
+                 expr.kwargs)
 
 
 def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
+    # Hack to detect whether to use old or new vectorize
+    if sum(len(ops) for ops in phase_ops) > 0:
+        _vec = _vectorize2
+    else:
+        _vec = _vectorize
+
     expr, result = traced_call(vexpr_caller.vexpr, kwargs)
-    vexpr_caller.vexpr = strip_metadata(_vectorize(expr))
+    vexpr_caller.vexpr = strip_metadata(_vec(expr))
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 
 
 def vectorize(f_or_expr, example_inputs=None):
     if example_inputs is not None:
+        # Hack to detect whether to use old or new vectorize
+        if sum(len(ops) for ops in phase_ops) > 0:
+            _vec = _vectorize2
+        else:
+            _vec = _vectorize
         if isinstance(f_or_expr, Vexpr):
             expr, result = traced_call(f_or_expr, example_inputs)
-            return strip_metadata(_vectorize(expr))
+            return strip_metadata(_vec(expr))
         else:
             if isinstance(f_or_expr, core.VexprCaller):
                 vexpr_caller = f_or_expr.clone()
@@ -200,7 +270,7 @@ def vectorize(f_or_expr, example_inputs=None):
                 vexpr_caller = core.make_vexpr(f_or_expr)
 
             expr, result = traced_call(vexpr_caller.vexpr, example_inputs)
-            vexpr_caller.vexpr = strip_metadata(_vectorize(expr))
+            vexpr_caller.vexpr = strip_metadata(_vec(expr))
             return vexpr_caller
     else:
         # Lazily vectorize when inputs are provided

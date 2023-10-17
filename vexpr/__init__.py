@@ -1,3 +1,13 @@
-from .core import Vexpr, Primitive, make_vexpr, partial_eval, symbol, let, eval
+from .core import (
+    Primitive,
+    Vexpr,
+    comparable,
+    comparable_hashable,
+    eval,
+    let,
+    make_vexpr,
+    partial_eval,
+    symbol,
+)
 from .to_python import to_python
 from .vectorization import vectorize

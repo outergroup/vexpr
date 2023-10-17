@@ -8,6 +8,9 @@ import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as cp
 
 
+def identity(x): return x
+
+
 def maybe_index_select(input, dim, indices):
     dim_positive = (dim
                     if dim >= 0
@@ -37,7 +40,7 @@ def maybe_index_select(input, dim, indices):
     return ret
 
 
-def maybe_shuffle(expr, indices, dim=0):
+def maybe_shuffle(expr, indices, dim=0, transform=identity):
     shape = v.shape(expr)
 
     # Fuse all shuffles
@@ -48,9 +51,12 @@ def maybe_shuffle(expr, indices, dim=0):
     if torch.equal(indices, torch.arange(len(indices))):
         result = expr
     else:
-        result = vctorch.shuffle(expr, indices, dim=dim)
+        result = v.with_return_shape(
+            vctorch.shuffle(expr, indices, dim=dim),
+            v.shape(expr)
+        )
         try:
-            result = v.pushthrough(result, expr.op)
+            result = transform(result)
         except v.CannotVectorize:
             pass
 
@@ -72,9 +78,11 @@ def maybe_shuffle(expr, indices, dim=0):
                             and (child.kwargs.get("dim", 0)
                                  == result.kwargs.get("dim", 0))):
                             indices = child.args[1][indices]
-                            result = vctorch.shuffle(child.args[0],
-                                                     indices,
-                                                     **result.kwargs)
+                            result = v.with_return_shape(
+                                vctorch.shuffle(child.args[0],
+                                                indices,
+                                                **result.kwargs),
+                                v.shape(child.args[0]))
                             changed = True
                             continue
                     break
@@ -86,4 +94,4 @@ def maybe_shuffle(expr, indices, dim=0):
             except v.CannotVectorize:
                 pass
 
-    return v.with_return_shape(result, shape)
+    return result

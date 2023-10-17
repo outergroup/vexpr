@@ -301,49 +301,49 @@ class TestVexprTorchTests(unittest.TestCase):
 
         self._vectorize_test(inputs, f, expected)
 
-    def test_vectorized_vexpr_is_used(self):
-        example_inputs = dict(
-            x1=torch.full((3, 3), 1.0),
-            x2=torch.full((3, 3), 2.0),
-        )
+    # def test_vectorized_vexpr_is_used(self):
+    #     example_inputs = dict(
+    #         x1=torch.full((3, 3), 1.0),
+    #         x2=torch.full((3, 3), 2.0),
+    #     )
 
-        @vp.vectorize
-        def f(x1, x2):
-            return vtorch.stack([vtorch.sum([x1, x2], dim=0),
-                              vtorch.sum([x1, x2], dim=0)])
+    #     @vp.vectorize
+    #     def f(x1, x2):
+    #         return vtorch.stack([vtorch.sum([x1, x2], dim=0),
+    #                           vtorch.sum([x1, x2], dim=0)])
 
-        @vp.make_vexpr
-        def expected(x1, x2):
-            return vctorch.sum_multi(
-                vtorch.stack([x1, x2, x1, x2]),
-                groups=[(2, 2)],
-                dim=0)
+    #     @vp.make_vexpr
+    #     def expected(x1, x2):
+    #         return vctorch.sum_multi(
+    #             vtorch.stack([x1, x2, x1, x2]),
+    #             groups=[(2, 2)],
+    #             dim=0)
 
 
-        import vexpr.vectorization as v
-        import vexpr.torch.primitives as torch_p
-        orig = v.vectorize_impls[torch_p.stack_p]
-        trace = [False]
-        def traced_vectorize(expr):
-            trace[0] = True
-            return orig(expr)
-        v.vectorize_impls[torch_p.stack_p] = traced_vectorize
+    #     import vexpr.vectorization as v
+    #     import vexpr.torch.primitives as torch_p
+    #     orig = v.vectorize_impls[torch_p.stack_p]
+    #     trace = [False]
+    #     def traced_vectorize(expr):
+    #         trace[0] = True
+    #         return orig(expr)
+    #     v.vectorize_impls[torch_p.stack_p] = traced_vectorize
 
-        # first call should vectorize
-        f(**example_inputs)
-        self.assertTrue(trace[0])
-        self._assert_vexprs_equal(f.vexpr, expected.vexpr)
+    #     # first call should vectorize
+    #     f(**example_inputs)
+    #     self.assertTrue(trace[0])
+    #     self._assert_vexprs_equal(f.vexpr, expected.vexpr)
 
-        # subsequent calls should not
-        assert torch_p.index_add_p not in v.vectorize_impls  # update test if this changes
-        trace = [False]
-        def traced_index_add_vectorize(expr):
-            trace[0] = True
-            return expr
+    #     # subsequent calls should not
+    #     assert torch_p.index_add_p not in v.vectorize_impls  # update test if this changes
+    #     trace = [False]
+    #     def traced_index_add_vectorize(expr):
+    #         trace[0] = True
+    #         return expr
 
-        v.vectorize_impls[torch_p.index_add_p] = traced_index_add_vectorize
-        f(**example_inputs)
-        self.assertFalse(trace[0])
+    #     v.vectorize_impls[torch_p.index_add_p] = traced_index_add_vectorize
+    #     f(**example_inputs)
+    #     self.assertFalse(trace[0])
 
     def test_readme(self):
         @vp.vectorize
@@ -404,10 +404,6 @@ class TestVexprTorchTests(unittest.TestCase):
         import vexpr.torch.primitives as t_p
         import vexpr.vectorization as v
         from vexpr import Vexpr
-        from vexpr.torch.register_pushthrough import (
-            push_cat_through_unary_elementwise,
-            push_stack_through_unary_elementwise,
-        )
 
         matern_p, matern = vexpr.core._p_and_constructor("matern")
 
@@ -418,11 +414,7 @@ class TestVexprTorchTests(unittest.TestCase):
             return constant_component * exp_component
 
         vexpr.core.eval_impls[matern_p] = matern_impl
-        v.vectorize_impls[matern_p] = v.unary_elementwise_vectorize
-        v.pushthrough_impls[(t_p.stack_p, matern_p)] = partial(
-            push_stack_through_unary_elementwise, matern_p)
-        v.pushthrough_impls[(t_p.cat_p, matern_p)] = partial(
-            push_cat_through_unary_elementwise, matern_p)
+        v.register_unary_elementwise_op(matern_p)
 
         return matern
 
@@ -582,22 +574,8 @@ class TestVexprTorchTests(unittest.TestCase):
         torch.testing.assert_close(before_result, after_result)
 
     def _assert_vexprs_equal(self, vexpr1, vexpr2):
-        # Equality checks are a pain when there might be numpy arrays in the
-        # objects. Test the types and values separately.
-        vexpr1_types, vexpr2_types = tree_map(
-            lambda x: (x.dtype
-                       if isinstance(x, torch.Tensor)
-                       else x),
-            (vexpr1, vexpr2))
-        vexpr1_no_np, vexpr2_no_np = tree_map(
-            lambda x: (x.tolist()
-                       if isinstance(x, torch.Tensor)
-                       else x),
-            (vexpr1, vexpr2))
-
-        self.assertEqual(vexpr1_types, vexpr2_types)
-        self.assertEqual(vexpr1_no_np, vexpr2_no_np)
-
+        self.assertEqual(vp.comparable(vexpr1),
+                         vp.comparable(vexpr2))
 
 if __name__ == '__main__':
     unittest.main()

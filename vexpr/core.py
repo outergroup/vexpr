@@ -123,6 +123,36 @@ def evaluate_args(args, context, call_fn=call):
                      for arg in args)
 
 
+def comparable(v):
+    for t, convert in to_comparable_conversions.items():
+        if isinstance(v, t):
+            return convert(v)
+    return v
+
+def comparable_hashable(v):
+    for t, convert in to_hashable_conversions.items():
+        if isinstance(v, t):
+            return convert(v)
+    for t, convert in to_comparable_conversions.items():
+        if isinstance(v, t):
+            return convert(v)
+    return v
+
+# modified by vexpr.numpy, vexpr.torch, etc
+to_comparable_conversions = {
+    Primitive: lambda v: v,
+    tuple: lambda v: tuple(comparable(v) for v in v),
+    list: lambda v: list(comparable(v) for v in v),
+}
+
+to_hashable_conversions = {
+    dict: lambda d: tuple(sorted((k, comparable_hashable(x))
+                                 for k, x in d.items())),
+    tuple: lambda v: tuple(comparable_hashable(v) for v in v),
+    list: lambda v: tuple(comparable_hashable(v) for v in v),
+}
+
+
 ################################################################################
 # Built-in primitives
 ################################################################################

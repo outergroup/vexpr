@@ -8,9 +8,9 @@ import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as cp
 import vexpr.torch as vtorch
+import vexpr.torch.impls as impls
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
-from vexpr.vectorization import _vectorize, with_metadata
 from vexpr.custom.torch.utils import (
     maybe_index_select,
     maybe_shuffle,
@@ -28,7 +28,116 @@ from vexpr.torch.utils import (
 )
 
 
-def push_cat_through_index_select_symbols(expr, allow_partial=True):
+
+PRIORITIZED_OPS = set([
+    p.stack_p, p.cat_p,
+    p.sum_p, p.prod_p, core.operator_add_p,
+    core.operator_mul_p, core.operator_truediv_p,
+    core.operator_matmul_p,
+    cp.sum_multi_p, cp.prod_multi_p, cp.fast_prod_positive_p,
+    cp.fast_prod_positive_multi_p, cp.mul_along_dim_p,
+    cp.shuffle_p,
+])
+
+# It's easy to accidentally include a p.functionname rather than a
+# p.functionname_p in PRIORITIZED_OPS.
+assert all(isinstance(op, core.Primitive) for op in PRIORITIZED_OPS)
+
+
+def identity(x): return x
+
+
+def stack_pushthrough(expr, transform=identity):
+    # get unique list of ops, preserving order
+    vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
+                                   if isinstance(v, vp.Vexpr)))
+    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
+
+    if len(vexpr_ops) > 0:
+        for allow_partial in (False, True):
+            for op in vexpr_ops:
+                try:
+                    return push_stack_through_op(expr, op,
+                                                 allow_partial=allow_partial,
+                                                 transform=transform)
+                except v.CannotVectorize:
+                    pass
+
+    raise v.CannotVectorize
+
+
+def push_stack_through_op(expr, op, transform=identity, allow_partial=True):
+    impl = impls.push_stack_through_op.get(op, None)
+    if impl is None:
+        print("No stack pushthrough support for", op)
+        raise v.CannotVectorize
+    else:
+        return impl(expr, transform, allow_partial)
+
+
+def cat_pushthrough(expr, transform=identity):
+    # get unique list of ops, preserving order
+    vexpr_ops = list(dict.fromkeys(v.op
+                                   for v in expr.args[0]
+                                   if isinstance(v, vp.Vexpr)))
+
+    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
+
+    if len(vexpr_ops) > 0:
+        # TODO add a phase0 that first pushes through any stacks
+
+        for allow_partial in (False, True):
+            for op in vexpr_ops:
+                try:
+                    return push_cat_through_op(expr, op,
+                                               allow_partial=allow_partial,
+                                               transform=transform)
+                except v.CannotVectorize:
+                    pass
+    elif len(expr.args[0]) == 1:
+        # If cat-ing one item, just return it.
+        return transform(expr.args[0][0])
+
+    raise v.CannotVectorize
+
+
+def push_cat_through_op(expr, op, transform=identity, allow_partial=True):
+    impl = impls.push_cat_through_op.get(op, None)
+    if impl is None:
+        print("No cat pushthrough support for", op)
+        raise v.CannotVectorize
+    else:
+        return impl(expr, transform, allow_partial)
+
+
+def moveaxis_pushthrough(expr, transform=identity):
+    op = expr.args[0].op
+    impl = impls.push_moveaxis_through_op.get(op, None)
+    if impl is None:
+        print("No moveaxis pushthrough support for", op)
+        return expr
+    else:
+        return impl(expr, transform)
+
+
+def index_select_pushthrough(expr, transform=identity):
+    if isinstance(expr.args[0], torch.Tensor):
+        return expr
+
+    op = expr.args[0].op
+    impl = impls.push_index_select_through_op.get(op, None)
+    if impl is None:
+        print("No index_select pushthrough support for", op)
+        raise v.CannotVectorize
+
+    return impl(expr, transform)
+
+
+def push_cat_through_index_select_symbols(expr):
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
     # they are the same symbol.
     if not all(sub_expr.op == p.index_select_p
@@ -73,6 +182,9 @@ def push_cat_through_index_select_symbols(expr, allow_partial=True):
         # factored out.
         return select_target
 
+    if len(expr.args[0]) == 1:
+        return expr.args[0][0]
+
     return_shape = list(v.shape(select_target))
     return_shape[dim] = len(indices)
     return_shape = tuple(return_shape)
@@ -81,13 +193,13 @@ def push_cat_through_index_select_symbols(expr, allow_partial=True):
         return_shape)
 
 
-def push_cat_through_index_select(expr, allow_partial=True):
+def push_cat_through_index_select(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     if any(child_expr.op == p.index_select_p
            and child_expr.args[0].op == core.symbol_p
            for child_expr in expr.args[0]):
-        return push_cat_through_index_select_symbols(expr, allow_partial)
+        return push_cat_through_index_select_symbols(expr)
 
     cat_dim = expr.kwargs.get("dim", 0)
 
@@ -117,12 +229,13 @@ def push_cat_through_index_select(expr, allow_partial=True):
                                     for child_expr in child_exprs],
                                    cat_dim)
 
-    target = v._vectorize(
+    target = transform(
         v.with_return_shape(
             vtorch.cat(target, **expr.kwargs),
             result_shape
         )
     )
+
     indices = torch.cat(indices)
 
     cat_dim_positive = (cat_dim
@@ -131,15 +244,12 @@ def push_cat_through_index_select(expr, allow_partial=True):
     ret_shape = (v.shape(target)[:cat_dim_positive]
                  + (len(indices),)
                  + v.shape(target)[cat_dim_positive + 1:])
-    return maybe_index_select(target, cat_dim, indices)
+    return transform(
+        maybe_index_select(target, cat_dim, indices)
+    )
 
 
-v.pushthrough_impls.update({
-    (p.cat_p, p.index_select_p): push_cat_through_index_select,
-})
-
-
-def push_cat_through_getitem(expr, allow_partial=True):
+def push_cat_through_getitem(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
@@ -240,12 +350,8 @@ def push_cat_through_getitem(expr, allow_partial=True):
                                                 for child_expr in expr.args[0]],
                                                axis))
 
-v.pushthrough_impls.update({
-    (p.cat_p, core.operator_getitem_p): push_cat_through_getitem,
-})
 
-
-def push_moveaxis_through_stack(expr, allow_partial=True):
+def push_moveaxis_through_stack(expr, transform=identity):
     assert expr.op == p.moveaxis_p
     assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.stack_p
 
@@ -264,15 +370,16 @@ def push_moveaxis_through_stack(expr, allow_partial=True):
         tmp = new_shape[source]
         new_shape[source] = new_shape[dest]
         new_shape[dest] = tmp
-        return v.with_return_shape(vtorch.stack(stack_expr.args[0], dim=dest),
-                                   tuple(new_shape))
-    else:
-        # don't attempt, leave the moveaxis where it is
-        return expr
+        expr = transform(
+            v.with_return_shape(vtorch.stack(stack_expr.args[0], dim=dest),
+                                tuple(new_shape))
+        )
+
+    return expr
 
 
-def push_cat_through_zeros_ones(zeros_ones_p, zeros_ones,
-                                   expr, allow_partial=True):
+def push_cat_through_zeros_ones(zeros_ones_p, zeros_ones, expr, transform=identity,
+                                allow_partial=True):
     assert expr.op == p.cat_p
 
     # initial hack: assume all args are same op
@@ -282,18 +389,13 @@ def push_cat_through_zeros_ones(zeros_ones_p, zeros_ones,
     dim = expr.kwargs.get("dim", 0)
     child_shapes = [child_expr.args[0] for child_expr in expr.args[0]]
     result_shape = torch_cat_shape(child_shapes, dim)
-    return v.with_return_shape(zeros_ones(result_shape),
-                               result_shape)
-
-v.pushthrough_impls.update({
-    (p.cat_p, p.zeros_p): partial(push_cat_through_zeros_ones, p.zeros_p,
-                                  vtorch.zeros),
-    (p.cat_p, p.ones_p): partial(push_cat_through_zeros_ones, p.ones_p,
-                                 vtorch.ones),
-})
+    return transform(
+        v.with_return_shape(zeros_ones(result_shape),
+                            result_shape)
+    )
 
 
-def push_cat_through_unsqueeze(expr, allow_partial=True):
+def push_cat_through_unsqueeze(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
     assert all(isinstance(child_expr, vp.Vexpr)
                and child_expr.op == p.unsqueeze_p
@@ -305,28 +407,32 @@ def push_cat_through_unsqueeze(expr, allow_partial=True):
     unsqueeze_dim = unsqueeze_dims[0]
 
     grandchildren = [child_expr.args[0] for child_expr in expr.args[0]]
-    grandchildren = v._vectorize(
-        v.with_return_shape(vtorch.cat(grandchildren, **expr.kwargs),
-                            torch_cat_shape([v.shape(gc)
-                                             for gc in grandchildren],
-                                            **expr.kwargs)))
+    grandchildren = transform(
+        v.with_return_shape(
+            vtorch.cat(grandchildren, **expr.kwargs),
+            torch_cat_shape([v.shape(gc)
+                             for gc in grandchildren],
+                            **expr.kwargs))
+    )
 
-    return_shape = v.shape(grandchildren)
-    unsqueeze_dim_nonneg = (unsqueeze_dim
-                            if unsqueeze_dim >= 0
-                            else unsqueeze_dim + len(return_shape) + 1)
-    return_shape = (return_shape[:unsqueeze_dim_nonneg]
-                    + (1,)
-                    + return_shape[unsqueeze_dim_nonneg:])
+    # Delete this if the v.shape(expr) below works.
+    # return_shape = v.shape(grandchildren)
+    # unsqueeze_dim_nonneg = (unsqueeze_dim
+    #                         if unsqueeze_dim >= 0
+    #                         else unsqueeze_dim + len(return_shape) + 1)
+    # return_shape = (return_shape[:unsqueeze_dim_nonneg]
+    #                 + (1,)
+    #                 + return_shape[unsqueeze_dim_nonneg:])
 
-    return v.with_return_shape(
-        vtorch.unsqueeze(grandchildren, unsqueeze_dim),
-        return_shape
+    return transform(
+        v.with_return_shape(
+            vtorch.unsqueeze(grandchildren, unsqueeze_dim),
+            v.shape(expr)
+        )
     )
 
 
-
-def push_moveaxis_through_sum(expr, allow_partial=True):
+def push_moveaxis_through_sum(expr, transform=identity):
     assert expr.op == p.moveaxis_p
     assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.sum_p
 
@@ -340,8 +446,7 @@ def push_moveaxis_through_sum(expr, allow_partial=True):
 
     source = expr.args[1]
     dest = expr.args[2]
-    sum_arg0 = vtorch.moveaxis(sum_arg0, source, dest)
-    sum_arg0 = v.pushthrough(sum_arg0, p.stack_p)
+    sum_arg0 = transform(vtorch.moveaxis(sum_arg0, source, dest))
 
     sum_axis = sum_expr.kwargs.get("dim", None)
 
@@ -349,19 +454,18 @@ def push_moveaxis_through_sum(expr, allow_partial=True):
     trace.insert(dest, trace.pop(source))
     new_axis = trace.index(sum_axis)
 
-    return sum(sum_arg0, dim=new_axis)
-
-v.pushthrough_impls.update({
-    (p.cat_p, p.unsqueeze_p): push_cat_through_unsqueeze,
-    (p.moveaxis_p, p.stack_p): push_moveaxis_through_stack,
-    (p.moveaxis_p, p.sum_p): push_moveaxis_through_sum,
-})
+    return transform(
+        v.with_return_shape(
+            vtorch.sum(sum_arg0, dim=new_axis),
+            v.shape(expr))
+    )
 
 
-def push_cat_through_stack(expr, allow_partial=True):
+def push_cat_through_stack(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
-    # initial hack: only do anything if everything is a stack
+    # initial hack: only do anything if everything is a stack.
+    # thus, this eliminates the cat.
     if not all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
                for arg in expr.args[0]):
         return expr
@@ -372,7 +476,6 @@ def push_cat_through_stack(expr, allow_partial=True):
     # shuffle(cat([stack, non-stack-exprs])), or remove the outer
     # cat of there are no non-stack-exprs.)
 
-    # todo push vectorize through children
     all_stacked_vexprs = []
     for child_expr in expr.args[0]:
         assert child_expr.kwargs.get("dim", 0) == dim
@@ -382,15 +485,16 @@ def push_cat_through_stack(expr, allow_partial=True):
                for child_expr in expr.args[0][1:])
     stack_kwargs = expr.args[0][0].kwargs
 
-    expr = v.with_return_shape(
-        vtorch.stack(all_stacked_vexprs, **stack_kwargs),
-        torch_stack_shape2([v.shape(d) for d in all_stacked_vexprs],
-                           **stack_kwargs)
+    return transform(
+        v.with_return_shape(
+            vtorch.stack(all_stacked_vexprs, **stack_kwargs),
+            torch_stack_shape2([v.shape(d) for d in all_stacked_vexprs],
+                               **stack_kwargs)
+        )
     )
-    expr = v._vectorize(expr)
-    return expr
 
-def push_cat_through_cat(expr, allow_partial=True):
+
+def push_cat_through_cat(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     cat_dims = [child_expr.kwargs.get("dim", 0)
@@ -400,7 +504,6 @@ def push_cat_through_cat(expr, allow_partial=True):
     assert all(cat_dim == cat_dims[0] for cat_dim in cat_dims)
     cat_dim = cat_dims[0]
 
-    # todo push vectorize through children
     all_cat_vexprs = []
     for child_expr in expr.args[0]:
         if isinstance(child_expr, vp.Vexpr) and child_expr.op == p.cat_p:
@@ -408,65 +511,17 @@ def push_cat_through_cat(expr, allow_partial=True):
         else:
             all_cat_vexprs.append(child_expr)
 
-    expr = vtorch.cat(all_cat_vexprs, dim=cat_dim)
-    return v.with_return_shape(
-        v._vectorize(expr),
-        torch_cat_shape([v.shape(child_expr) for child_expr in all_cat_vexprs],
-                        cat_dim)
+    return transform(
+        v.with_return_shape(
+            vtorch.cat(all_cat_vexprs, dim=cat_dim),
+            torch_cat_shape([v.shape(child_expr) for child_expr in all_cat_vexprs],
+                            cat_dim)
+        )
     )
 
 
-def push_cat_through_index_reduction(index_reduction_p, parallel_reduction,
-                                     expr, allow_partial=True):
-    assert expr.op == p.cat_p
-
-    cat_dim = expr.kwargs.get("dim", 0)
-
-    index_reduction_dims = [child_expr.args[1]
-                            for child_expr in expr.args[0]
-                            if isinstance(child_expr, vp.Vexpr)
-                            and child_expr.op == index_reduction_p]
-    assert all(dim == index_reduction_dims[0] for dim in index_reduction_dims)
-    index_reduction_dim = index_reduction_dims[0]
-
-    target = []
-    indices = []
-    grandchildren = []
-    base = 0
-    for child_expr in expr.args[0]:
-        child_shape = v.shape(child_expr)
-        num_results = child_shape[cat_dim]
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op == index_reduction_p:
-            target.append(child_expr.args[0])
-            grandchildren.append(child_expr.args[3])
-            indices.append(child_expr.args[2] + base)
-            base += num_results
-        else:
-            target.append(vtorch.zeros(child_shape))
-            grandchildren.append(child_expr)
-            indices.append(torch.arange(base, base + num_results))
-            base += num_results
-
-    target = v._vectorize(vtorch.cat(target, dim=cat_dim))
-    indices = torch.cat(indices)
-    grandchildren = v._vectorize(vtorch.cat(grandchildren, dim=cat_dim))
-
-    return v.with_return_shape(parallel_reduction(target, index_reduction_dim,
-                                                  indices, grandchildren),
-                               torch_cat_shape([v.shape(child_expr)
-                                                for child_expr in expr.args[0]],
-                                               dim=cat_dim))
-
-def parallel_sum(target, dim, index, source):
-    return vtorch.index_add(target, dim, index, source)
-
-def parallel_prod(target, dim, index, source):
-    return vtorch.index_reduce(target, dim, index, source, "prod")
-
-
-def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
+def push_stack_through_unary_elementwise(op, expr, transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
-
     applicable = []
     applicable_indices = []
     remainder = []
@@ -480,25 +535,36 @@ def push_stack_through_unary_elementwise(op, expr, allow_partial=True):
             remainder_indices.append(i)
 
     grandchildren = [child_expr.args[0] for child_expr in applicable]
-    grandchildren = v._vectorize(
-        v.with_return_shape(vtorch.stack(grandchildren, **expr.kwargs),
-                            torch_stack_shape2([v.shape(gc)
-                                                for gc in grandchildren],
-                                               **expr.kwargs)))
+    grandchildren = transform(
+        v.with_return_shape(
+            vtorch.stack(grandchildren, **expr.kwargs),
+            torch_stack_shape2([v.shape(gc)
+                                for gc in grandchildren],
+                               **expr.kwargs))
+    )
 
-    return stack_remainder_then_combine(
+    expr = transform(
         v.with_return_shape(
             vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
             v.shape(grandchildren)
-        ),
-        remainder,
-        applicable_indices,
-        remainder_indices,
-        **expr.kwargs)
+        )
+    )
+
+    return transform(
+        stack_remainder_then_combine(
+            expr,
+            remainder,
+            applicable_indices,
+            remainder_indices,
+            transform,
+            **expr.kwargs)
+    )
 
 
-def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
+def push_cat_through_unary_elementwise(op, expr, transform=identity,
+                                       allow_partial=True):
     assert expr.op == p.cat_p
+    expr_initial = expr
 
     applicable = []
     applicable_indices = []
@@ -520,24 +586,37 @@ def push_cat_through_unary_elementwise(op, expr, allow_partial=True):
         base += num_indices
 
     grandchildren = [child_expr.args[0] for child_expr in applicable]
-    grandchildren = v._vectorize(
-        v.with_return_shape(vtorch.cat(grandchildren, **expr.kwargs),
-                            torch_cat_shape([v.shape(gc)
-                                             for gc in grandchildren],
-                                            **expr.kwargs)))
+    grandchildren = transform(
+        v.with_return_shape(
+            vtorch.cat(grandchildren, **expr.kwargs),
+            torch_cat_shape([v.shape(gc)
+                             for gc in grandchildren],
+                            **expr.kwargs))
+    )
 
-    return cat_remainder_then_combine(
+    expr = transform(
         v.with_return_shape(
             vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
             v.shape(grandchildren)
-        ),
+        )
+    )
+
+    expr = cat_remainder_then_combine(
+        expr,
         remainder,
         applicable_indices,
         remainder_indices,
-        **expr.kwargs)
+        transform,
+        dim=dim)
+    if vp.comparable(expr) != vp.comparable(expr_initial):
+        # There will be infinite loops if this function always ends up calling
+        # itself, so transforms must be guarded.
+        expr = transform(expr)
+
+    return expr
 
 
-def push_cat_through_truediv(expr, allow_partial=True):
+def push_cat_through_truediv(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     # initial hack: assume all args are truediv
@@ -559,16 +638,24 @@ def push_cat_through_truediv(expr, allow_partial=True):
                                 dim=axis)
     den_shape = torch_cat_shape([v.shape(child_expr) for child_expr in den],
                                 dim=axis)
-    num = v.with_return_shape(v._vectorize(vtorch.cat(num, dim=axis)),
-                              num_shape)
-    den = v.with_return_shape(v._vectorize(vtorch.cat(den, dim=axis)),
-                              den_shape)
+    num = transform(
+        v.with_return_shape(vtorch.cat(num, dim=axis),
+                            num_shape)
+    )
+    den = transform(
+        v.with_return_shape(vtorch.cat(den, dim=axis),
+                            den_shape)
+    )
 
-    return v.with_return_shape(num / den,
-                               torch.broadcast_shapes(v.shape(num),
-                                                      v.shape(den)))
+    return transform(
+        v.with_return_shape(
+            num / den,
+            torch.broadcast_shapes(v.shape(num),
+                                   v.shape(den)))
+    )
 
-def push_stack_through_mul(expr, allow_partial=True):
+
+def push_stack_through_mul(expr, transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
 
     left = []
@@ -589,40 +676,46 @@ def push_stack_through_mul(expr, allow_partial=True):
     if "dim" in expr.kwargs:
         kwargs["dim"] = expr.kwargs["dim"]
 
-    left = v._vectorize(
+    left = transform(
         v.with_return_shape(
             vtorch.stack(left, **kwargs),
             torch_stack_shape2([v.shape(d) for d in left],
-                               **expr.kwargs)))
+                               **expr.kwargs))
+    )
 
     if identity:
         ones_shape = (len(expr.args[0]),)
-        left = v.with_return_shape(
-            vtorch.scatter(
-                v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
-                0,
-                torch.tensor(actual_indices),
-                left),
-            ones_shape)
+        left = transform(
+            v.with_return_shape(
+                vtorch.scatter(
+                    v.with_return_shape(vtorch.ones(ones_shape), ones_shape),
+                    0,
+                    torch.tensor(actual_indices),
+                    left),
+                ones_shape)
+        )
 
-    right = v._vectorize(
+    right = transform(
         v.with_return_shape(
             vtorch.stack(right, **kwargs),
             torch_stack_shape2([v.shape(d) for d in right],
-                               **expr.kwargs)))
+                               **expr.kwargs))
+    )
 
     dim = expr.kwargs.get("dim", 0)
     ndim = len(v.shape(right))
     if canonical_axis(dim, ndim) == ndim - 1:
-        return v.with_return_shape(left * right,
+        expr = v.with_return_shape(left * right,
                                    torch.broadcast_shapes(v.shape(left),
                                                           v.shape(right)))
     else:
-        return v.with_return_shape(vctorch.mul_along_dim(left, right, dim=dim),
+        expr = v.with_return_shape(vctorch.mul_along_dim(left, right, dim=dim),
                                    v.shape(right))
 
+    return transform(expr)
 
-def push_cat_through_mul(expr, allow_partial=True):
+
+def push_cat_through_mul(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     dim = expr.kwargs.get("dim", 0)
@@ -656,30 +749,39 @@ def push_cat_through_mul(expr, allow_partial=True):
 
     left_shapes = [v.shape(child_expr) for child_expr in left]
 
-    left = v._vectorize(v.with_return_shape(vtorch.cat(left, dim=dim),
-                                            torch_cat_shape(left_shapes,
-                                                            dim=dim)))
+    left = transform(
+        v.with_return_shape(vtorch.cat(left, dim=dim),
+                            torch_cat_shape(left_shapes,
+                                            dim=dim))
+    )
+
     if identity:
         ones_shape = (total_n,)
-        left = v.with_return_shape(
-            vtorch.scatter(
-                v.with_return_shape(vtorch.ones(ones_shape),
-                                    ones_shape),
-                0,
-                torch.tensor(actual_indices),
-                left),
-            ones_shape)
+        left = transform(
+            v.with_return_shape(
+                vtorch.scatter(
+                    v.with_return_shape(vtorch.ones(ones_shape),
+                                        ones_shape),
+                    0,
+                    torch.tensor(actual_indices),
+                    left),
+                ones_shape)
+        )
 
     right_shapes = [v.shape(child_expr) for child_expr in right]
 
-    right = v._vectorize(v.with_return_shape(vtorch.cat(right, dim=dim),
-                                             torch_cat_shape(right_shapes,
-                                                             dim=dim)))
+    right = transform(
+        v.with_return_shape(vtorch.cat(right, dim=dim),
+                            torch_cat_shape(right_shapes,
+                                            dim=dim)))
 
-    return v.with_return_shape(left * right, torch_cat_shape(child_shapes,
-                                                             dim=dim))
+    return transform(
+        v.with_return_shape(left * right,
+                            torch_cat_shape(child_shapes, dim=dim))
+    )
 
-def push_cat_through_scatter(expr, allow_partial=True):
+
+def push_cat_through_scatter(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     into = []
@@ -715,10 +817,14 @@ def push_cat_through_scatter(expr, allow_partial=True):
     source_shape = torch_cat_shape([v.shape(source_expr) for source_expr in sources],
                                    dim=dim)
 
-    into = v._vectorize(v.with_return_shape(vtorch.cat(into, dim=dim),
-                                            into_shape))
-    sources = v._vectorize(v.with_return_shape(vtorch.cat(sources, dim=dim),
-                                               source_shape))
+    into = transform(
+        v.with_return_shape(vtorch.cat(into, dim=dim),
+                            into_shape)
+    )
+    sources = transform(
+        v.with_return_shape(vtorch.cat(sources, dim=dim),
+                            source_shape)
+    )
     indices = torch.cat(indices, dim=dim)
     batch_shape = v.shape(sources)[:-1]
     if len(batch_shape) > 0:
@@ -727,42 +833,13 @@ def push_cat_through_scatter(expr, allow_partial=True):
         shape = batch_shape + (num_indices,)
         indices = v.with_return_shape(vtorch.expand(indices, shape),
                                       shape)
-    return v.with_return_shape(vtorch.scatter(into, dim, indices, sources),
-                               into_shape)
-
-v.pushthrough_impls.update({
-    (p.cat_p, p.stack_p): push_cat_through_stack,
-    (p.cat_p, p.cat_p): push_cat_through_cat,
-    (p.stack_p, p.sum_p): partial(push_stack_through_reduction, p.sum_p,
-                                  vctorch.sum_multi, 0.),
-    (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
-                                   vctorch.prod_multi, 1.),
-    (p.stack_p, cp.fast_prod_positive_p): partial(
-        push_stack_through_reduction, cp.fast_prod_positive_p,
-        vctorch.fast_prod_positive_multi, 1.),
-    (p.cat_p, p.index_add_p): partial(push_cat_through_index_reduction,
-                                      p.index_add_p,
-                                      parallel_sum),
-    # TODO this is hardcoded to prod, but index reduce might use e.g. mean
-    (p.cat_p, p.index_reduce_p): partial(push_cat_through_index_reduction,
-                                         p.index_reduce_p,
-                                         parallel_prod),
-    (p.stack_p, p.exp_p): partial(
-        push_stack_through_unary_elementwise, p.exp_p),
-    (p.cat_p, p.exp_p): partial(
-        push_cat_through_unary_elementwise, p.exp_p),
-    (p.cat_p, core.operator_truediv_p): push_cat_through_truediv,
-    (p.stack_p, core.operator_mul_p): push_stack_through_mul,
-    (p.cat_p, core.operator_mul_p): push_cat_through_mul,
-    (p.stack_p, core.operator_neg_p): partial(
-        push_stack_through_unary_elementwise, core.operator_neg_p),
-    (p.cat_p, core.operator_neg_p): partial(
-        push_cat_through_unary_elementwise, core.operator_neg_p),
-    (p.cat_p, p.scatter_p): push_cat_through_scatter,
-})
+    return transform(
+        v.with_return_shape(vtorch.scatter(into, dim, indices, sources),
+                            into_shape)
+    )
 
 
-def push_stack_through_cdist(expr, allow_partial=True):
+def push_stack_through_cdist(expr, transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
 
     stack_dim = expr.kwargs.get("dim", 0)
@@ -789,8 +866,22 @@ def push_stack_through_cdist(expr, allow_partial=True):
             remainder.append(child_expr)
             remainder_indices.append(i)
 
-    left = v._vectorize(vtorch.cat(left, dim=-1))
-    right = v._vectorize(vtorch.cat(right, dim=-1))
+    left = transform(
+        v.with_return_shape(
+            vtorch.cat(left, dim=-1),
+            torch_cat_shape([v.shape(child_expr)
+                             for child_expr in left],
+                            -1)
+        )
+    )
+    right = transform(
+        v.with_return_shape(
+            vtorch.cat(right, dim=-1),
+            torch_cat_shape([v.shape(child_expr)
+                             for child_expr in right],
+                            -1)
+        )
+    )
 
     groups = list(collections.Counter(zip(lengths, ps)).items())
 
@@ -807,8 +898,8 @@ def push_stack_through_cdist(expr, allow_partial=True):
     pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
     post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
 
-    left = maybe_shuffle(left, pre_shuffle_indices, dim=-1)
-    right = maybe_shuffle(right, pre_shuffle_indices, dim=-1)
+    left = transform(maybe_shuffle(left, pre_shuffle_indices, -1, transform))
+    right = transform(maybe_shuffle(right, pre_shuffle_indices, -1, transform))
 
     kwargs = dict(
         groups = groups,
@@ -830,22 +921,26 @@ def push_stack_through_cdist(expr, allow_partial=True):
         dim += len(result_shape) + 1
     result_shape = result_shape[:dim] + (len(lengths),) + result_shape[dim:]
 
-    applicable =  v.with_return_shape(
-        vctorch.cdist_multi(left, right, **kwargs),
-        result_shape)
-    applicable = maybe_shuffle(applicable, post_shuffle_indices, dim=dim)
+    applicable =  transform(
+        v.with_return_shape(
+            vctorch.cdist_multi(left, right, **kwargs),
+            result_shape)
+    )
+    applicable = transform(
+        maybe_shuffle(applicable, post_shuffle_indices, dim, transform)
+    )
 
-    return stack_remainder_then_combine(
-        applicable,
-        remainder,
-        applicable_indices,
-        remainder_indices,
-        **expr.kwargs)
+    return transform(
+        stack_remainder_then_combine(
+            applicable,
+            remainder,
+            applicable_indices,
+            remainder_indices,
+            **expr.kwargs)
+    )
 
-v.pushthrough_impls[(p.stack_p, p.cdist_p)] = push_stack_through_cdist
 
-
-def push_index_select_through_expand(expr, allow_partial=True):
+def push_index_select_through_expand(expr, transform=identity, allow_partial=True):
     assert expr.op == p.index_select_p
     assert isinstance(expr.args[2], vp.Vexpr) and expr.args[2].op == p.expand_p
 
@@ -861,8 +956,70 @@ def push_index_select_through_expand(expr, allow_partial=True):
     else:
         raise ValueError("expand arg 0 must be a Vexpr or a Tensor")
 
-    return v.with_return_shape(
-        vtorch.expand(t, expand_expr.args[1]),
-        v.shape(expand_expr))
+    return transform(
+        v.with_return_shape(
+            vtorch.expand(t, expand_expr.args[1]),
+            v.shape(expand_expr))
+    )
 
-v.pushthrough_impls[(p.index_select_p, p.expand_p)] = push_index_select_through_expand
+def raise_cannot_vectorize(expr, transform=identity, allow_partial=True):
+    raise v.CannotVectorize
+
+def register_elementwise_op(op):
+    impls.push_stack_through_op.update({
+        op: partial(push_stack_through_unary_elementwise, op),
+    })
+    impls.push_cat_through_op.update({
+        op: partial(push_cat_through_unary_elementwise, op),
+    })
+
+v.unary_elementwise_registration_steps.append(register_elementwise_op)
+
+impls.push_stack_through_op.update({
+    p.sum_p: partial(push_stack_through_reduction, p.sum_p, vctorch.sum_multi,
+                     0.),
+    p.prod_p: partial(push_stack_through_reduction, p.prod_p,
+                      vctorch.prod_multi, 1.),
+    p.exp_p: partial(push_stack_through_unary_elementwise, p.exp_p),
+    core.operator_mul_p: push_stack_through_mul,
+    core.operator_neg_p: partial(push_stack_through_unary_elementwise,
+                                 core.operator_neg_p),
+    p.cdist_p: push_stack_through_cdist,
+})
+
+impls.push_cat_through_op.update({
+    p.index_select_p: push_cat_through_index_select,
+    core.operator_getitem_p: push_cat_through_getitem,
+    p.zeros_p: partial(push_cat_through_zeros_ones, p.zeros_p, vtorch.zeros),
+    p.ones_p: partial(push_cat_through_zeros_ones, p.ones_p, vtorch.ones),
+    p.unsqueeze_p: push_cat_through_unsqueeze,
+    p.stack_p: push_cat_through_stack,
+    p.cat_p: push_cat_through_cat,
+    p.exp_p: partial(push_cat_through_unary_elementwise, p.exp_p),
+    core.operator_truediv_p: push_cat_through_truediv,
+    core.operator_mul_p: push_cat_through_mul,
+    core.operator_neg_p: partial(push_cat_through_unary_elementwise,
+                                 core.operator_neg_p),
+    p.scatter_p: push_cat_through_scatter,
+})
+
+impls.push_moveaxis_through_op.update({
+    p.stack_p: push_moveaxis_through_stack,
+    p.sum_p: push_moveaxis_through_sum,
+})
+
+impls.push_index_select_through_op.update({
+    p.expand_p: push_index_select_through_expand,
+    core.symbol_p: raise_cannot_vectorize,
+})
+
+v.phase_ops[0] += [
+    (p.stack_p, stack_pushthrough),
+]
+
+v.phase_ops[1] += [
+    (p.stack_p, stack_pushthrough),
+    (p.cat_p, cat_pushthrough),
+    (p.moveaxis_p, moveaxis_pushthrough),
+    (p.index_select_p, index_select_pushthrough),
+]

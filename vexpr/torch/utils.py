@@ -9,6 +9,10 @@ import vexpr.custom.torch as vctorch
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import maybe_shuffle
 
+
+def identity(x): return x
+
+
 def torch_stack_shape(initial_shape, num_elements, dim=0):
     if dim < 0:
         dim += len(initial_shape) + 1
@@ -96,18 +100,19 @@ def invert_shuffle(indices):
 
 
 def stack_remainder_then_combine(applicable, remainder, applicable_indices,
-                                 remainder_indices, **stack_kwargs):
+                                 remainder_indices, transform=identity,
+                                 **stack_kwargs):
     if len(remainder) == 0:
         return applicable
 
-    remainder = v._vectorize(
-        v.with_return_shape(
-            vtorch.stack(remainder, **stack_kwargs),
-            torch_stack_shape2([v.shape(r_expr)
-                                for r_expr in remainder],
-                               **stack_kwargs)
-        )
+    remainder = v.with_return_shape(
+        vtorch.stack(remainder, **stack_kwargs),
+        torch_stack_shape2([v.shape(r_expr)
+                            for r_expr in remainder],
+                           **stack_kwargs)
     )
+    if transform is not None:
+        remainder = transform(remainder)
 
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
                                    **stack_kwargs)
@@ -122,32 +127,45 @@ def stack_remainder_then_combine(applicable, remainder, applicable_indices,
 
 
 def cat_remainder_then_combine(applicable, remainder, applicable_indices,
-                               remainder_indices, **cat_kwargs):
+                               remainder_indices, transform=identity,
+                               dim=0):
     if len(remainder) == 0:
         return applicable
 
-    remainder = v._vectorize(
+    # suppose we've called pushthrough on a unary op that has already gotten the
+    # treatment. now my "applicable" is matern, the exp and exp2 get cat'd. i
+    # push a transform on this remainder, and nothing happens. no change. i cat
+    # the result with the applicable, possibly factoring out the inner cat. now
+    # i have something equal to before... but how do i know? and we hit these
+    # weird questions, like maybe it *will* change if transfrom=None, but then
+    # it goes back to what it was after the transform.
+
+    # i'm beginning to think that comparison of vexprs is the solution. remove
+    # change-tracking. 👍
+
+    remainder = transform(
         v.with_return_shape(
-            vtorch.cat(remainder, **cat_kwargs),
+            vtorch.cat(remainder, dim=dim),
             torch_cat_shape([v.shape(r_expr)
                              for r_expr in remainder],
-                            **cat_kwargs)
+                            dim=dim)
         )
     )
 
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
-                                   **cat_kwargs)
+                                   dim=dim)
     result = v.with_return_shape(vtorch.cat([applicable, remainder],
-                                            **cat_kwargs),
+                                            dim=dim),
                                  result_shape)
 
     return maybe_shuffle(result,
                          invert_shuffle(applicable_indices + remainder_indices),
-                         **cat_kwargs)
+                         dim,
+                         transform)
 
 
 def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
-                                 expr, allow_partial=True):
+                                 expr, transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
 
     exprs_to_stack = expr.args[0]
@@ -175,7 +193,7 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
 
             if r_axis != stack_dim:
                 r_arg0 = vtorch.moveaxis(r_arg0, r_axis, stack_dim)
-                r_arg0 = v.pushthrough(r_arg0, child_expr.op)
+                r_arg0 = transform(r_arg0)
                 r_axis = stack_dim
 
             # Incorporate child_expr's computation into a vectorized reduction.
@@ -184,15 +202,23 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
         else:
             # Pass child_expr through. Implement Identity as a reduction of 1
             # element.
-
-            # TODO is this is gross to do a full vectorize here?
-            child_expr = vtorch.stack([child_expr], dim=stack_dim)
-            child_expr = v._vectorize(child_expr)
+            child_expr = v.with_return_shape(
+                vtorch.stack([child_expr], dim=stack_dim),
+                torch_stack_shape(v.shape(child_expr), 1, stack_dim)
+            )
+            child_expr = transform(child_expr)
             all_reduction_operands.append(child_expr)
             lengths.append(1)
 
-    all_reduction_operands = v._vectorize(vtorch.cat(all_reduction_operands,
-                                                     dim=stack_dim))
+    all_reduction_operands = transform(
+        v.with_return_shape(
+            vtorch.cat(all_reduction_operands,
+                       dim=stack_dim),
+            torch_cat_shape([v.shape(child_expr)
+                             for child_expr in all_reduction_operands],
+                            stack_dim)
+        )
+    )
 
     groups = list(collections.Counter(lengths).items())
 
@@ -211,7 +237,8 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
 
     all_reduction_operands = maybe_shuffle(all_reduction_operands,
                                            pre_shuffle_indices,
-                                           dim=stack_dim)
+                                           stack_dim,
+                                           transform)
 
     result = parallel_reduction(all_reduction_operands, groups=groups,
                                 dim=stack_dim)
@@ -222,4 +249,6 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
                                      len(exprs_to_stack),
                                      dim=stack_dim)
     return maybe_shuffle(v.with_return_shape(result, result_shape),
-                         post_shuffle_indices)
+                         post_shuffle_indices,
+                         stack_dim,
+                         transform)

@@ -93,6 +93,14 @@ def lift_shuffle_from_unary_elementwise(op, expr):
     return expr
 
 
+def register_elementwise_op(op):
+    v.lift_impls[(op, cp.shuffle_p)] = partial(
+        lift_shuffle_from_unary_elementwise, op
+    )
+
+
+v.unary_elementwise_registration_steps.append(register_elementwise_op)
+
 v.lift_impls.update({
     (p.exp_p, cp.shuffle_p): partial(lift_shuffle_from_unary_elementwise,
                                      p.exp_p),

@@ -1,5 +1,6 @@
 import torch
 
+import vexpr as vp
 import vexpr.vectorization as v
 from vexpr import core
 from . import primitives as p
@@ -20,6 +21,16 @@ v.shape_impls.update({
                   torch.int16, torch.int32, torch.int64, torch.uint8,
                   torch.bool]
 })
+
+
+core.to_comparable_conversions.update({
+    torch.Tensor: lambda v: vp.comparable(v.tolist()),
+})
+
+core.to_hashable_conversions.update({
+    torch.Tensor: lambda v: vp.comparable_hashable(v.tolist()),
+})
+
 
 def allow_listlike_arg0(torch_func):
     def wrapper(arg0, *args, **kwargs):
