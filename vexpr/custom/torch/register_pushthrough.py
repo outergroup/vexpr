@@ -602,7 +602,9 @@ def push_mul_along_dim_through_mul_along_dim(expr, transform=identity, allow_par
                 vctorch.mul_along_dim(
                     w, inner_w,
                     dim=-1),
-                v.shape(inner_t)),
+                torch.broadcast_shapes(v.shape(w),
+                                       v.shape(inner_w))
+            ),
             inner_t,
             **t.kwargs
         ),
@@ -839,22 +841,15 @@ cimpls.push_mul_along_dim_through_op.update({
     cp.cdist_multi_p: raise_cannot_vectorize,
     p.exp_p: raise_cannot_vectorize,
     p.cat_p: raise_cannot_vectorize,
+    cp.sum_multi_p: push_mul_along_dim_through_sum_multi,
+    cp.fast_prod_positive_multi_p: push_mul_along_dim_through_fast_prod_positive_multi,
+    cp.shuffle_p: push_mul_along_dim_through_shuffle,
 })
-
-if vctorch.constants.enable_extended_multiply_pushing:
-    cimpls.push_mul_along_dim_through_op.update({
-        cp.sum_multi_p: push_mul_along_dim_through_sum_multi,
-        cp.fast_prod_positive_multi_p: push_mul_along_dim_through_fast_prod_positive_multi,
-        cp.shuffle_p: push_mul_along_dim_through_shuffle,
-    })
-else:
-    cimpls.push_mul_along_dim_through_op.update({
-        cp.sum_multi_p: raise_cannot_vectorize,
-        cp.fast_prod_positive_multi_p: raise_cannot_vectorize,
-        cp.shuffle_p: raise_cannot_vectorize,
-    })
 
 v.phase_ops[1] += [
     (cp.shuffle_p, shuffle_pushthrough),
+]
+
+v.phase_ops[2] += [
     (cp.mul_along_dim_p, mul_along_dim_pushthrough),
 ]

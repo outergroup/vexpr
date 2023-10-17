@@ -146,12 +146,14 @@ def _vectorize2(expr):
     """
     Function that orchestrates the vectorization process.
     """
+    catch = [True, True, False]
     while True:
         iteration_prev_expr = expr
         group_i = 0
         while group_i < len(phase_ops):
             group_prev_expr = expr
-            expr = recursive_pushthrough(phase_ops[group_i], expr)
+            expr = recursive_pushthrough(phase_ops[group_i], expr, 
+                                         always_catch=catch[group_i])
             if vp.comparable(expr) == vp.comparable(group_prev_expr):
                 group_i += 1
         if vp.comparable(expr) == vp.comparable(iteration_prev_expr):
@@ -170,22 +172,27 @@ phase_ops = [
     [],
 ]
 
-def recursive_pushthrough(ops, expr):
-    transform = partial(recursive_pushthrough, ops)
+def recursive_pushthrough(ops, expr, always_catch=True):
     ops = dict(ops)
 
-    if expr.op in ops:
-        pushthrough = ops[expr.op]
-        try:
+    def recursive_pushthrough_nocatch(expr):
+        transform = (partial(recursive_pushthrough, ops, always_catch=True)
+                     if always_catch
+                     else recursive_pushthrough_nocatch)
+        if expr.op in ops:
+            pushthrough = ops[expr.op]
             return pushthrough(expr, transform)
-        except CannotVectorize:
-            pass
+        else:
+            return with_return_shape(
+                Vexpr(expr.op,
+                      recursively_transform_args(expr.args, transform),
+                      expr.kwargs),
+                shape(expr))
 
-    return with_return_shape(
-        Vexpr(expr.op,
-              recursively_transform_args(expr.args, transform),
-              expr.kwargs),
-        shape(expr))
+    try:
+        return recursive_pushthrough_nocatch(expr)
+    except CannotVectorize:
+        return expr
 
 
 ################################################################################
