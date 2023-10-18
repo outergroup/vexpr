@@ -145,25 +145,15 @@ def register_unary_elementwise_op(op):
         register(op)
 
 
-def _vectorize2(expr):
-    """
-    Function that orchestrates the vectorization process.
-    """
-    catch = [True, True, False]
-    while True:
-        iteration_prev_expr = expr
-        group_i = 0
-        while group_i < len(phase_ops):
-            group_prev_expr = expr
-            expr = recursive_pushthrough(phase_ops[group_i], expr, 
-                                         always_catch=catch[group_i])
-            if vp.comparable(expr) == vp.comparable(group_prev_expr):
-                group_i += 1
-        for transform in additional_transforms:
-            expr = transform(expr)
-        if vp.comparable(expr) == vp.comparable(iteration_prev_expr):
-            break
+implicit_stack_ops = {}
 
+def convert_implicit_stacks(expr):
+    if expr.op in implicit_stack_ops \
+       and not isinstance(expr.args[0], vp.Vexpr) \
+       and isinstance(expr.args[0], (list, tuple)):
+        stack_fn = implicit_stack_ops[expr.op]
+        new_args = (stack_fn(expr.args[0]),)
+        return with_return_shape(expr.update_args(new_args), shape(expr))
     return expr
 
 
@@ -181,11 +171,51 @@ additional_transforms = [
 ]
 
 
-def recursive_pushthrough(ops, expr, always_catch=True):
-    ops = dict(ops)
+def _vectorize2(expr, phases=tuple(range(len(phase_ops)))):
+    """
+    Function that orchestrates the vectorization process.
+    """
+    expr = vp.bottom_up_transform(convert_implicit_stacks, expr)
 
+    always_catch = [True, True, False]
+    while True:
+        iteration_prev_expr = expr
+        group_i = 0
+        while group_i < len(phase_ops):
+            if group_i not in phases:
+                group_i += 1
+                continue
+
+            group_prev_expr = expr
+            ops = dict(phase_ops[group_i])
+
+            # Top-down pushthrough
+            expr = top_down_recursive_pushthrough(ops, expr,
+                                                  always_catch[group_i])
+
+            # Bottom-up pushthroughs
+            if always_catch[group_i]:
+                expr = vp.bottom_up_transform(
+                    catching_recursive_pushthrough(ops),
+                    expr)
+            else:
+                expr = vp.bottom_up_transform(
+                    single_catch_recursive_pushthrough(ops),
+                    expr)
+            if vp.comparable(expr) == vp.comparable(group_prev_expr):
+                group_i += 1
+        for transform in additional_transforms:
+            expr = transform(expr)
+        if vp.comparable(expr) == vp.comparable(iteration_prev_expr):
+            break
+
+    return expr
+
+
+def top_down_recursive_pushthrough(ops, expr, always_catch=True):
     def recursive_pushthrough_nocatch(expr):
-        transform = (partial(recursive_pushthrough, ops, always_catch=True)
+        transform = (partial(top_down_recursive_pushthrough, ops,
+                             always_catch=True)
                      if always_catch
                      else recursive_pushthrough_nocatch)
         if expr.op in ops:
@@ -202,6 +232,46 @@ def recursive_pushthrough(ops, expr, always_catch=True):
         return recursive_pushthrough_nocatch(expr)
     except CannotVectorize:
         return expr
+
+
+def recursive_pushthrough(ops):
+    def _recursive_pushthrough(expr):
+        if expr.op in ops:
+            pushthrough = ops[expr.op]
+            return pushthrough(expr, _recursive_pushthrough)
+        else:
+            return expr
+
+    return _recursive_pushthrough
+
+
+def single_catch_recursive_pushthrough(ops):
+    def _onetime_recursive_pushthrough(expr):
+        next_pushthrough = recursive_pushthrough(ops)
+        if expr.op in ops:
+            pushthrough = ops[expr.op]
+            try:
+                return pushthrough(expr, next_pushthrough)
+            except CannotVectorize:
+                return expr
+        else:
+            return expr
+
+    return _onetime_recursive_pushthrough
+
+
+def catching_recursive_pushthrough(ops):
+    def _recursive_pushthrough(expr):
+        if expr.op in ops:
+            pushthrough = ops[expr.op]
+            try:
+                return pushthrough(expr, _recursive_pushthrough)
+            except CannotVectorize:
+                return expr
+        else:
+            return expr
+
+    return _recursive_pushthrough
 
 
 ################################################################################
@@ -262,16 +332,18 @@ def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
         _vec = _vectorize
 
     expr, result = traced_call(vexpr_caller.vexpr, kwargs)
-    vexpr_caller.vexpr = vp.bottom_up_transform(strip_metadata, expr)
+    vexpr_caller.vexpr = vp.bottom_up_transform(strip_metadata, _vec(expr))
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 
 
-def vectorize(f_or_expr, example_inputs=None):
+def vectorize(f_or_expr, example_inputs=None, phase_override=None):
     if example_inputs is not None:
         # Hack to detect whether to use old or new vectorize
         if sum(len(ops) for ops in phase_ops) > 0:
             _vec = _vectorize2
+            if phase_override is not None:
+                _vec = partial(_vec, phases=phase_override)
         else:
             _vec = _vectorize
         if isinstance(f_or_expr, Vexpr):

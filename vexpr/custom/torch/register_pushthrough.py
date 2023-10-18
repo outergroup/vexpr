@@ -26,6 +26,7 @@ from vexpr.torch.utils import (
     cat_remainder_then_combine,
     push_stack_through_reduction,
     shuffle_and_multi_reduce,
+    stack_detect_shape,
 )
 
 
@@ -90,13 +91,6 @@ def push_cat_through_shuffle(expr, transform=identity, allow_partial=True):
     return transform(
         maybe_shuffle(ret, indices, **expr.kwargs, transform=transform)
     )
-
-
-def single_push_shuffle(expr):
-    if expr.op != cp.shuffle_p:
-        return expr
-
-    return shuffle_pushthrough(expr)
 
 
 def push_cat_through_cdist_multi(expr, transform=identity, allow_partial=True):
@@ -453,8 +447,8 @@ def push_cat_through_mul_along_dim(expr, transform=identity, allow_partial=True)
 
     t_shapes = [v.shape(t_expr) for t_expr in t]
     t = transform(v.with_return_shape(vtorch.cat(t, dim=cat_dim),
-                                         torch_cat_shape(t_shapes,
-                                                         dim=cat_dim)))
+                                      torch_cat_shape(t_shapes,
+                                                      dim=cat_dim)))
 
     ret = transform(
         v.with_return_shape(
@@ -565,12 +559,13 @@ def push_shuffle_through_unsqueeze(expr, transform=identity, allow_partial=True)
     return v.with_return_shape(
         vtorch.unsqueeze(
             transform(
-                vctorch.shuffle(unsqueeze_expr.args[0],
-                                expr.args[1],
-                                **expr.kwargs)),
+                v.with_return_shape(
+                    vctorch.shuffle(unsqueeze_expr.args[0],
+                                    expr.args[1],
+                                    **expr.kwargs),
+                    v.shape(unsqueeze_expr.args[0]))),
             unsqueeze_expr.args[1]),
         v.shape(expr.args[0]))
-
 
 
 def identity_pushthrough(expr, transform=identity, allow_partial=True):
@@ -606,7 +601,9 @@ def push_shuffle_through_scatter(expr, transform=identity, allow_partial=True):
 
     if isinstance(input, vp.Vexpr):
         input = transform(
-            vctorch.shuffle(input, expr.args[1], **expr.kwargs))
+            v.with_return_shape(
+                vctorch.shuffle(input, expr.args[1], **expr.kwargs),
+                v.shape(input)))
     elif isinstance(input, torch.Tensor):
         input = input.index_select(expr.get("dim", 0), expr.args[1])
     else:
@@ -858,12 +855,16 @@ def register_elementwise_op(op):
     cimpls.push_shuffle_through_op.update({
         op: partial(push_shuffle_through_unary_elementwise, op),
     })
-    # cimpls.push_mul_along_dim_through_op.update({
-    #     op: partial(push_shuffle_through_unary_elementwise, op),
-    # })
+    cimpls.push_mul_along_dim_through_op.update({
+        op: raise_cannot_vectorize,
+    })
 
 
 v.unary_elementwise_registration_steps.append(register_elementwise_op)
+
+v.implicit_stack_ops.update({
+    cp.fast_prod_positive_p: stack_detect_shape,
+})
 
 impls.push_stack_through_op.update({
     cp.fast_prod_positive_p: partial(
@@ -925,8 +926,4 @@ v.phase_ops[2] += [
 
 v.additional_transforms += [
     partial(vp.bottom_up_transform, merge_sum_multi_shuffle_sum_multi),
-    # TODO Hack: The phased shuffle pushthrough might not reach them all, since
-    # it does top down rollout which might stop short. Need to stop relying
-    # solely on top-down rollouts.
-    partial(vp.bottom_up_transform, single_push_shuffle),
 ]

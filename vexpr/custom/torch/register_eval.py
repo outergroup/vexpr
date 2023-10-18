@@ -1,9 +1,11 @@
 import torch
 
 from vexpr import core
+import vexpr.torch.primitives as p
 from vexpr.torch.register_eval import allow_listlike_arg0
 from vexpr.torch.utils import torch_stack_shape
-from . import primitives as p
+from . import primitives as cp
+
 
 # TODO remove this and rely on index_select, merging all of their vectorization
 # logic. (It won't be faster, but it creates a rising tide to lift all boats.)
@@ -11,7 +13,7 @@ def shuffle_impl(arr, indices, dim=0):
     with torch.profiler.record_function("shuffle"):
         return arr.index_select(dim, indices)
 
-core.eval_impls[p.shuffle_p] = shuffle_impl
+core.eval_impls[cp.shuffle_p] = shuffle_impl
 
 
 def cdist_multi_impl(x1, x2, groups):
@@ -30,7 +32,7 @@ def cdist_multi_impl(x1, x2, groups):
         return ret
 
 
-core.eval_impls[p.cdist_multi_p] = cdist_multi_impl
+core.eval_impls[cp.cdist_multi_p] = cdist_multi_impl
 
 
 def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
@@ -41,7 +43,7 @@ def fast_prod_positive_impl(x, dim=None, epsilon=1e-10):
         return x.clamp(min=epsilon).log().sum(dim=dim).exp()
 
 
-core.eval_impls[p.fast_prod_positive_p] = allow_listlike_arg0(
+core.eval_impls[cp.fast_prod_positive_p] = allow_listlike_arg0(
     fast_prod_positive_impl)
 
 
@@ -101,9 +103,9 @@ def fast_prod_positive_multi_impl(x, groups, dim, epsilon=1e-10):
 core.eval_impls.update({
     # Ideally these would be implemented with functools.partial, but this causes
     # torch.compile to split out into a new CompiledFunction (as of PyTorch 2.1)
-    p.sum_multi_p: sum_multi_impl,
-    p.prod_multi_p: prod_multi_impl,
-    p.fast_prod_positive_multi_p: fast_prod_positive_multi_impl,
+    cp.sum_multi_p: sum_multi_impl,
+    cp.prod_multi_p: prod_multi_impl,
+    cp.fast_prod_positive_multi_p: fast_prod_positive_multi_impl,
 })
 
 
@@ -116,30 +118,7 @@ def mul_along_dim_impl(w, t, dim=0):
         new_shape[dim - w_n + 1 : dim + 1] = w.shape
         return w.view(new_shape) * t
 
-core.eval_impls[p.mul_along_dim_p] = mul_along_dim_impl
-
-
-def index_add_into_zeros_impl(n_sums, dim, index, source, *args, **kwargs):
-    with torch.profiler.record_function("index_add_into_zeros"):
-        shape = list(source.shape)
-        shape[dim] = n_sums
-        shape = tuple(shape)
-        return source.new_zeros(shape).index_add_(dim, index, source, *args,
-                                                  **kwargs)
-
-core.eval_impls[p.index_add_into_zeros_p] = index_add_into_zeros_impl
-
-
-def index_reduce_into_ones_impl(n_reductions, dim, index, source, *args,
-                                **kwargs):
-    with torch.profiler.record_function("index_reduce_into_ones"):
-        shape = list(source.shape)
-        shape[dim] = n_reductions
-        shape = tuple(shape)
-        ret = torch.ones(shape, dtype=source.dtype, device=source.device)
-        return ret.index_reduce(dim, index, source, *args, **kwargs)
-
-core.eval_impls[p.index_reduce_into_ones_p] = index_reduce_into_ones_impl
+core.eval_impls[cp.mul_along_dim_p] = mul_along_dim_impl
 
 
 def heads_tails_impl(alpha):
@@ -151,4 +130,4 @@ def heads_tails_impl(alpha):
         else:
             return torch.stack([alpha, 1.0 - alpha])
 
-core.eval_impls[p.heads_tails_p] = heads_tails_impl
+core.eval_impls[cp.heads_tails_p] = heads_tails_impl

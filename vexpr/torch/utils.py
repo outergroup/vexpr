@@ -127,20 +127,11 @@ def stack_remainder_then_combine(applicable, remainder, applicable_indices,
 
 def cat_remainder_then_combine(applicable, remainder, applicable_indices,
                                remainder_indices, transform=identity,
-                               dim=0):
+                               **cat_kwargs):
     if len(remainder) == 0:
         return applicable
 
-    # suppose we've called pushthrough on a unary op that has already gotten the
-    # treatment. now my "applicable" is matern, the exp and exp2 get cat'd. i
-    # push a transform on this remainder, and nothing happens. no change. i cat
-    # the result with the applicable, possibly factoring out the inner cat. now
-    # i have something equal to before... but how do i know? and we hit these
-    # weird questions, like maybe it *will* change if transfrom=None, but then
-    # it goes back to what it was after the transform.
-
-    # i'm beginning to think that comparison of vexprs is the solution. remove
-    # change-tracking. 👍
+    dim = cat_kwargs.get("dim", 0)
 
     remainder = transform(
         v.with_return_shape(
@@ -154,7 +145,7 @@ def cat_remainder_then_combine(applicable, remainder, applicable_indices,
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
                                    dim=dim)
     result = v.with_return_shape(vtorch.cat([applicable, remainder],
-                                            dim=dim),
+                                            **cat_kwargs),
                                  result_shape)
 
     return maybe_shuffle(result,
@@ -255,3 +246,11 @@ def shuffle_and_multi_reduce(parallel_reduction, expr, lengths, dim,
                          post_shuffle_indices,
                          dim,
                          transform)
+
+
+def stack_detect_shape(children):
+    return v.with_return_shape(
+        vtorch.stack(children),
+        torch_stack_shape2([v.shape(child)
+                            for child in children])
+    )

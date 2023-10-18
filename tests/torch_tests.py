@@ -7,9 +7,6 @@ import vexpr.custom.torch as vctorch
 import vexpr.torch as vtorch
 
 
-from jax.tree_util import tree_map
-
-
 class TestVexprTorchTests(unittest.TestCase):
     def test_to_python(self):
         expr = vtorch.sum([vp.symbol("x1"), vp.symbol("x2")], dim=0)
@@ -260,7 +257,14 @@ class TestVexprTorchTests(unittest.TestCase):
                     dim=0),
                 dim=0)
 
-        self._vectorize_test(example_inputs, kernel, expected)
+        # Skip phase 2, which pushes multiplies deeper
+        vectorized = vp.vectorize(kernel.vexpr, example_inputs, phase_override=(0, 1))
+
+        self._assert_vexprs_equal(vectorized, expected.vexpr)
+
+        before_result = kernel(**example_inputs)
+        after_result = vp.eval(vectorized, example_inputs)
+        torch.testing.assert_close(before_result, after_result)
 
     @unittest.skip("Not yet supported")
     def test_mul_identity(self):
@@ -574,8 +578,7 @@ class TestVexprTorchTests(unittest.TestCase):
         torch.testing.assert_close(before_result, after_result)
 
     def _assert_vexprs_equal(self, vexpr1, vexpr2):
-        self.assertEqual(vp.comparable(vexpr1),
-                         vp.comparable(vexpr2))
+        self.assertEqual(vp.comparable(vexpr1), vp.comparable(vexpr2))
 
 if __name__ == '__main__':
     unittest.main()
