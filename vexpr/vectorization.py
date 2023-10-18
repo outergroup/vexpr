@@ -27,6 +27,9 @@ class VexprWithMetadata(Vexpr):
         self.metadata = metadata
         return self
 
+    def update_args(self, args):
+        return VexprWithMetadata(self.op, args, self.kwargs, self.metadata)
+
 
 def with_metadata(expr: Vexpr, metadata: dict):
     return VexprWithMetadata(*expr, metadata)
@@ -156,6 +159,8 @@ def _vectorize2(expr):
                                          always_catch=catch[group_i])
             if vp.comparable(expr) == vp.comparable(group_prev_expr):
                 group_i += 1
+        for transform in additional_transforms:
+            expr = transform(expr)
         if vp.comparable(expr) == vp.comparable(iteration_prev_expr):
             break
 
@@ -171,6 +176,10 @@ phase_ops = [
     # multiply
     [],
 ]
+
+additional_transforms = [
+]
+
 
 def recursive_pushthrough(ops, expr, always_catch=True):
     ops = dict(ops)
@@ -242,9 +251,7 @@ def recursively_transform_args(args, transform):
 
 
 def strip_metadata(expr):
-    return Vexpr(expr.op, recursively_transform_args(expr.args,
-                                                     strip_metadata),
-                 expr.kwargs)
+    return Vexpr(expr.op, expr.args, expr.kwargs)
 
 
 def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
@@ -255,7 +262,7 @@ def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
         _vec = _vectorize
 
     expr, result = traced_call(vexpr_caller.vexpr, kwargs)
-    vexpr_caller.vexpr = strip_metadata(_vec(expr))
+    vexpr_caller.vexpr = vp.bottom_up_transform(strip_metadata, expr)
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 

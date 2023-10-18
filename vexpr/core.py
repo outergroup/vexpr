@@ -18,6 +18,9 @@ class Vexpr(NamedTuple):
     args: tuple
     kwargs: dict
 
+    def update_args(self, args):
+        return Vexpr(self.op, args, self.kwargs)
+
     def __call__(self, *args, **kwargs):
         return operator_call(self, *args, **kwargs)
 

@@ -25,6 +25,7 @@ from vexpr.torch.utils import (
     torch_cat_shape,
     cat_remainder_then_combine,
     push_stack_through_reduction,
+    shuffle_and_multi_reduce,
 )
 
 
@@ -89,6 +90,13 @@ def push_cat_through_shuffle(expr, transform=identity, allow_partial=True):
     return transform(
         maybe_shuffle(ret, indices, **expr.kwargs, transform=transform)
     )
+
+
+def single_push_shuffle(expr):
+    if expr.op != cp.shuffle_p:
+        return expr
+
+    return shuffle_pushthrough(expr)
 
 
 def push_cat_through_cdist_multi(expr, transform=identity, allow_partial=True):
@@ -259,6 +267,73 @@ def push_cat_through_reduction_multi(reduction_multi_p, parallel_reduction,
 
     return maybe_shuffle(result, post_shuffle_indices, cat_dim, transform)
 
+
+def merge_sum_multi_shuffle_sum_multi(expr):
+    """
+    Detect
+    1. sum_mult
+    2. shuffle
+    3. sum_multi
+
+    Or
+    1. sum_multi
+    2. mul_along_dim
+    3. shuffle
+    4. sum_multi
+
+    If this pattern is found, push any mul_along_dim down through the sum_multi,
+    and merge the sums into each other.
+    """
+    if expr.op != cp.sum_multi_p:
+        return expr
+
+    if expr.args[0].op == cp.mul_along_dim_p \
+       and expr.args[0].args[1].op == cp.shuffle_p \
+       and expr.args[0].args[1].args[0].op == cp.sum_multi_p:
+        shuffle_expr = mul_along_dim_pushthrough(expr.args[0])
+        shuffle_expr = shuffle_expr.update_args((
+            mul_along_dim_pushthrough(shuffle_expr.args[0]),
+            shuffle_expr.args[1]))
+        inner_sum_expr = shuffle_expr.args[0]
+    elif expr.args[0].op == cp.shuffle_p \
+         and expr.args[0].args[0].op == cp.sum_multi_p:
+        shuffle_expr = expr.args[0]
+        inner_sum_expr = shuffle_expr.args[0]
+    else:
+        return expr
+
+    # ungroup the sums
+    inner_groups = inner_sum_expr.kwargs["groups"]
+    base = 0
+    pushed_through_shuffle = []
+    inner_lengths = []
+    for d, n in inner_groups:
+        inner_lengths += [d] * n
+        for i in range(base, base + n):
+            pushed_through_shuffle.append(torch.arange(base, base + d))
+            base += d
+    pushed_through_shuffle = [pushed_through_shuffle[i]
+                              for i in shuffle_expr.args[1].tolist()]
+    pushed_through_shuffle = torch.cat(pushed_through_shuffle)
+    inner_lengths = [inner_lengths[i]
+                     for i in shuffle_expr.args[1].tolist()]
+
+    i_operand = 0
+    lengths = []
+    for d, n in expr.kwargs["groups"]:
+        for _ in range(n):
+            new_length = 0
+            for _ in range(d):
+                new_length += inner_lengths[i_operand]
+                i_operand += 1
+            lengths.append(new_length)
+
+    grandchildren = maybe_shuffle(inner_sum_expr.args[0],
+                                  pushed_through_shuffle, expr.kwargs["dim"])
+
+    return shuffle_and_multi_reduce(vctorch.sum_multi, grandchildren,
+                                    lengths, expr.kwargs["dim"],
+                                    v.shape(expr))
 
 
 def push_stack_through_mul_along_dim(expr, transform=identity, allow_partial=True):
@@ -709,17 +784,11 @@ def push_mul_along_dim_through_sum_multi(expr, transform=identity, allow_partial
         )
     )
 
-    ret = v.with_return_shape(
+    return v.with_return_shape(
         vctorch.sum_multi(
             sum_children,
             **t.kwargs),
         v.shape(expr))
-
-    # TODO now check if the children are a sum_multi and fold them in if so
-
-    # TODO and that should include if the next reduction is a sum_multi. so this
-    # is an opportunity to crush any shuffles in the middle.
-    return ret
 
 
 def push_mul_along_dim_through_fast_prod_positive_multi(expr, transform=identity, allow_partial=True):
@@ -852,4 +921,12 @@ v.phase_ops[1] += [
 
 v.phase_ops[2] += [
     (cp.mul_along_dim_p, mul_along_dim_pushthrough),
+]
+
+v.additional_transforms += [
+    partial(vp.bottom_up_transform, merge_sum_multi_shuffle_sum_multi),
+    # TODO Hack: The phased shuffle pushthrough might not reach them all, since
+    # it does top down rollout which might stop short. Need to stop relying
+    # solely on top-down rollouts.
+    partial(vp.bottom_up_transform, single_push_shuffle),
 ]

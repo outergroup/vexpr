@@ -5,7 +5,6 @@ import torch
 import vexpr as vp
 import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
-import vexpr.custom.torch as vctorch
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import maybe_shuffle
 
@@ -220,6 +219,21 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
         )
     )
 
+    child_shape = next(v.shape(expr) for expr in exprs_to_stack
+                       if isinstance(expr, vp.Vexpr))
+    result_shape = torch_stack_shape(child_shape,
+                                     len(exprs_to_stack),
+                                     dim=stack_dim)
+    return shuffle_and_multi_reduce(parallel_reduction,
+                                    all_reduction_operands,
+                                    lengths,
+                                    stack_dim,
+                                    result_shape,
+                                    transform)
+
+
+def shuffle_and_multi_reduce(parallel_reduction, expr, lengths, dim,
+                             result_shape, transform=identity):
     groups = list(collections.Counter(lengths).items())
 
     pre_shuffle_indices = []
@@ -235,20 +249,9 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
     pre_shuffle_indices = torch.tensor(pre_shuffle_indices)
     post_shuffle_indices = invert_shuffle(post_shuffle_indices_inverted)
 
-    all_reduction_operands = maybe_shuffle(all_reduction_operands,
-                                           pre_shuffle_indices,
-                                           stack_dim,
-                                           transform)
-
-    result = parallel_reduction(all_reduction_operands, groups=groups,
-                                dim=stack_dim)
-
-    child_shape = next(v.shape(expr) for expr in exprs_to_stack
-                       if isinstance(expr, vp.Vexpr))
-    result_shape = torch_stack_shape(child_shape,
-                                     len(exprs_to_stack),
-                                     dim=stack_dim)
-    return maybe_shuffle(v.with_return_shape(result, result_shape),
+    expr = maybe_shuffle(expr, pre_shuffle_indices, dim, transform)
+    expr = parallel_reduction(expr, groups=groups, dim=dim)
+    return maybe_shuffle(v.with_return_shape(expr, result_shape),
                          post_shuffle_indices,
-                         stack_dim,
+                         dim,
                          transform)
