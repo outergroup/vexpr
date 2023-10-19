@@ -131,26 +131,24 @@ def cat_remainder_then_combine(applicable, remainder, applicable_indices,
     if len(remainder) == 0:
         return applicable
 
-    dim = cat_kwargs.get("dim", 0)
-
     remainder = transform(
         v.with_return_shape(
-            vtorch.cat(remainder, dim=dim),
+            vtorch.cat(remainder, **cat_kwargs),
             torch_cat_shape([v.shape(r_expr)
                              for r_expr in remainder],
-                            dim=dim)
+                            **cat_kwargs)
         )
     )
 
     result_shape = torch_cat_shape([v.shape(applicable), v.shape(remainder)],
-                                   dim=dim)
+                                   **cat_kwargs)
     result = v.with_return_shape(vtorch.cat([applicable, remainder],
                                             **cat_kwargs),
                                  result_shape)
 
     return maybe_shuffle(result,
                          invert_shuffle(applicable_indices + remainder_indices),
-                         dim,
+                         cat_kwargs.get("dim", 0),
                          transform)
 
 
@@ -193,7 +191,7 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
             # Pass child_expr through. Implement Identity as a reduction of 1
             # element.
             child_expr = v.with_return_shape(
-                vtorch.stack([child_expr], dim=stack_dim),
+                vtorch.stack([child_expr], **expr.kwargs),
                 torch_stack_shape(v.shape(child_expr), 1, stack_dim)
             )
             child_expr = transform(child_expr)
@@ -202,8 +200,7 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, fill_value,
 
     all_reduction_operands = transform(
         v.with_return_shape(
-            vtorch.cat(all_reduction_operands,
-                       dim=stack_dim),
+            vtorch.cat(all_reduction_operands, **expr.kwargs),
             torch_cat_shape([v.shape(child_expr)
                              for child_expr in all_reduction_operands],
                             stack_dim)

@@ -25,6 +25,7 @@ from vexpr.torch.utils import (
     stack_remainder_then_combine,
     cat_remainder_then_combine,
     push_stack_through_reduction,
+    stack_detect_shape,
 )
 
 
@@ -51,7 +52,6 @@ def stack_pushthrough(expr, transform=identity):
     # get unique list of ops, preserving order
     vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
-    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
@@ -128,13 +128,30 @@ def index_select_pushthrough(expr, transform=identity):
     if isinstance(expr.args[0], torch.Tensor):
         return expr
 
+    failure1 = False
+    msgs = []
     op = expr.args[0].op
     impl = impls.push_index_select_through_op.get(op, None)
     if impl is None:
-        print("No index_select pushthrough support for", op)
-        raise v.CannotVectorize
+        msgs += f"No index_select pushthrough support for {op}"
+        failure1 = True
+    else:
+        expr = impl(expr, transform)
 
-    return impl(expr, transform)
+    failure2 = True
+    if isinstance(expr.args[2], vp.Vexpr):
+        op = expr.args[2].op
+        impl = impls.push_index_select_through_op2.get(op, None)
+        if impl is None:
+            msgs += f"No index_select pushthrough support for {op}"
+        else:
+            failure2 = False
+            expr = impl(expr, transform)
+
+    if failure1 and failure2:
+        raise v.CannotVectorize(",".join(msgs))
+
+    return expr
 
 
 def push_cat_through_index_select_symbols(expr):
@@ -415,15 +432,6 @@ def push_cat_through_unsqueeze(expr, transform=identity, allow_partial=True):
                             **expr.kwargs))
     )
 
-    # Delete this if the v.shape(expr) below works.
-    # return_shape = v.shape(grandchildren)
-    # unsqueeze_dim_nonneg = (unsqueeze_dim
-    #                         if unsqueeze_dim >= 0
-    #                         else unsqueeze_dim + len(return_shape) + 1)
-    # return_shape = (return_shape[:unsqueeze_dim_nonneg]
-    #                 + (1,)
-    #                 + return_shape[unsqueeze_dim_nonneg:])
-
     return transform(
         v.with_return_shape(
             vtorch.unsqueeze(grandchildren, unsqueeze_dim),
@@ -543,7 +551,7 @@ def push_stack_through_unary_elementwise(op, expr, transform=identity, allow_par
                                **expr.kwargs))
     )
 
-    expr = transform(
+    new_expr = transform(
         v.with_return_shape(
             vp.Vexpr(op, (grandchildren,), applicable[0].kwargs),
             v.shape(grandchildren)
@@ -552,7 +560,7 @@ def push_stack_through_unary_elementwise(op, expr, transform=identity, allow_par
 
     return transform(
         stack_remainder_then_combine(
-            expr,
+            new_expr,
             remainder,
             applicable_indices,
             remainder_indices,
@@ -607,7 +615,7 @@ def push_cat_through_unary_elementwise(op, expr, transform=identity,
         applicable_indices,
         remainder_indices,
         transform,
-        dim=dim)
+        **expr_initial.kwargs)
     if vp.comparable(expr) != vp.comparable(expr_initial):
         # There will be infinite loops if this function always ends up calling
         # itself, so transforms must be guarded.
@@ -962,6 +970,9 @@ def push_index_select_through_expand(expr, transform=identity, allow_partial=Tru
             v.shape(expand_expr))
     )
 
+def pushthrough_return_self(expr, transform=identity, allow_partial=True):
+    return expr
+
 def raise_cannot_vectorize(expr, transform=identity, allow_partial=True):
     raise v.CannotVectorize
 
@@ -975,7 +986,13 @@ def register_elementwise_op(op):
 
 v.unary_elementwise_registration_steps.append(register_elementwise_op)
 
+v.implicit_stack_ops.update({
+    p.sum_p: stack_detect_shape,
+    p.prod_p: stack_detect_shape,
+})
+
 impls.push_stack_through_op.update({
+    core.symbol_p: pushthrough_return_self,
     p.sum_p: partial(push_stack_through_reduction, p.sum_p, vctorch.sum_multi,
                      0.),
     p.prod_p: partial(push_stack_through_reduction, p.prod_p,
@@ -1009,8 +1026,11 @@ impls.push_moveaxis_through_op.update({
 })
 
 impls.push_index_select_through_op.update({
-    p.expand_p: push_index_select_through_expand,
     core.symbol_p: raise_cannot_vectorize,
+})
+
+impls.push_index_select_through_op2.update({
+    p.expand_p: push_index_select_through_expand,
 })
 
 v.phase_ops[0] += [

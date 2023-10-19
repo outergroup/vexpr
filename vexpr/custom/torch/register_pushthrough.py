@@ -446,9 +446,8 @@ def push_cat_through_mul_along_dim(expr, transform=identity, allow_partial=True)
             ones_shape)
 
     t_shapes = [v.shape(t_expr) for t_expr in t]
-    t = transform(v.with_return_shape(vtorch.cat(t, dim=cat_dim),
-                                      torch_cat_shape(t_shapes,
-                                                      dim=cat_dim)))
+    t = transform(v.with_return_shape(vtorch.cat(t, **expr.kwargs),
+                                      torch_cat_shape(t_shapes, **expr.kwargs)))
 
     ret = transform(
         v.with_return_shape(
@@ -471,7 +470,6 @@ def push_concat_through_heads_tails(expr, transform=identity, allow_partial=True
     if len(expr.args[0]) == 1:
         return transform(expr.args[0][0])
 
-    cat_dim = expr.kwargs.get("dim", 0)
     alphas = []
     for child_expr in expr.args[0]:
         if (not isinstance(child_expr, vp.Vexpr)
@@ -482,20 +480,20 @@ def push_concat_through_heads_tails(expr, transform=identity, allow_partial=True
         alpha_shape = v.shape(alpha)
         if len(v.shape(alpha)) == 0:
             alpha = v.with_return_shape(
-                transform(vtorch.stack([alpha], dim=cat_dim)),
+                transform(vtorch.stack([alpha], **expr.kwargs)),
                 (1,))
         alphas.append(alpha)
 
     alphas = transform(v.with_return_shape(
-        vtorch.cat(alphas, dim=cat_dim),
+        vtorch.cat(alphas, **expr.kwargs),
         torch_cat_shape([v.shape(alpha)
                          for alpha in alphas],
-                        dim=cat_dim)
+                        **expr.kwargs)
         ))
     return v.with_return_shape(vctorch.heads_tails(alphas),
                                torch_cat_shape([v.shape(child_expr)
                                                 for child_expr in expr.args[0]],
-                                               dim=cat_dim))
+                                               **expr.kwargs))
 
 
 def push_shuffle_through_truediv(expr, transform=identity, allow_partial=True):
