@@ -31,6 +31,9 @@ assert all(isinstance(op, core.Primitive) for op in PRIORITIZED_OPS)
 
 def identity(x): return x
 
+def pushthrough_return_self(expr, transform=identity, allow_partial=True):
+    return expr
+
 
 def stack_pushthrough(expr, transform=identity):
     # get unique list of ops, preserving order
@@ -587,6 +590,7 @@ v.implicit_stack_ops.update({
 
 
 impls.push_stack_through_op.update({
+    core.symbol_p: pushthrough_return_self,
     p.sum_p: partial(push_stack_through_reduction, p.sum_p,
                      parallel_sum),
     p.prod_p: partial(push_stack_through_reduction, p.prod_p,
