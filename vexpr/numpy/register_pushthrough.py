@@ -3,10 +3,109 @@ from functools import partial
 import numpy as np
 
 import vexpr as vp
-import vexpr.numpy as vnp
 import vexpr.core as core
+import vexpr.custom.numpy.primitives as cp
+import vexpr.numpy as vnp
+import vexpr.numpy.impls as impls
 import vexpr.numpy.primitives as p
 import vexpr.vectorization as v
+from vexpr.numpy.utils import (
+    np_stack_shape,
+    np_stack_shape2,
+    np_concatenate_shape,
+)
+
+
+PRIORITIZED_OPS = set([
+    p.stack_p, p.concatenate_p,
+    p.sum_p, p.prod_p, p.add_at_p, p.multiply_at_p,
+    core.operator_add_p, core.operator_mul_p, core.operator_truediv_p,
+    core.operator_matmul_p,
+    cp.shuffle_p,
+])
+
+# It's easy to accidentally include a p.functionname rather than a
+# p.functionname_p in PRIORITIZED_OPS.
+assert all(isinstance(op, core.Primitive) for op in PRIORITIZED_OPS)
+
+
+def identity(x): return x
+
+
+def stack_pushthrough(expr, transform=identity):
+    # get unique list of ops, preserving order
+    vexpr_ops = list(dict.fromkeys(v.op for v in expr.args[0]
+                                   if isinstance(v, vp.Vexpr)))
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
+
+    if len(vexpr_ops) > 0:
+        for allow_partial in (False, True):
+            for op in vexpr_ops:
+                try:
+                    return push_stack_through_op(expr, op,
+                                                 allow_partial=allow_partial,
+                                                 transform=transform)
+                except v.CannotVectorize:
+                    pass
+
+    raise v.CannotVectorize
+
+
+def push_stack_through_op(expr, op, transform=identity, allow_partial=True):
+    impl = impls.push_stack_through_op.get(op, None)
+    if impl is None:
+        print("No stack pushthrough support for", op)
+        raise v.CannotVectorize
+    else:
+        return impl(expr, transform, allow_partial)
+
+
+def concatenate_pushthrough(expr, transform=identity):
+    # get unique list of ops, preserving order
+    vexpr_ops = list(dict.fromkeys(v.op
+                                   for v in expr.args[0]
+                                   if isinstance(v, vp.Vexpr)))
+
+    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
+    vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
+                 + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
+
+    if len(vexpr_ops) > 0:
+        for allow_partial in (False, True):
+            for op in vexpr_ops:
+                try:
+                    return push_concatenate_through_op(
+                        expr, op, allow_partial=allow_partial,
+                        transform=transform)
+                except v.CannotVectorize:
+                    pass
+    elif len(expr.args[0]) == 1:
+        # If concatenate-ing one item, just return it.
+        return transform(expr.args[0][0])
+
+    raise v.CannotVectorize
+
+
+def push_concatenate_through_op(expr, op, transform=identity, allow_partial=True):
+    impl = impls.push_concatenate_through_op.get(op, None)
+    if impl is None:
+        print("No concatenate pushthrough support for", op)
+        raise v.CannotVectorize
+    else:
+        return impl(expr, transform, allow_partial)
+
+
+def moveaxis_pushthrough(expr, transform=identity):
+    op = expr.args[0].op
+    impl = impls.push_moveaxis_through_op.get(op, None)
+    if impl is None:
+        print("No moveaxis pushthrough support for", op)
+        return expr
+    else:
+        return impl(expr, transform)
+
+
 
 def canonical_axis(axis, ndim):
     if axis is None:
@@ -16,7 +115,8 @@ def canonical_axis(axis, ndim):
     else:
         return axis
 
-def push_concatenate_through_getitem(expr, allow_partial=True):
+
+def push_concatenate_through_getitem(expr, transform=identity, allow_partial=True):
     assert expr.op == p.concatenate_p
 
     # Quick hacky assumptions: every child expr is selecting from a symbol, and
@@ -91,7 +191,7 @@ def push_concatenate_through_getitem(expr, allow_partial=True):
 
     axis = expr.kwargs.get("axis", 0)
     ndim = len(v.shape(select_target))
-    if not canonical_axis(axis, ndim) == canonical_axis(select_axis, ndim):
+    if canonical_axis(axis, ndim) != canonical_axis(select_axis, ndim):
         raise NotImplementedError()
     else:
         # prefer the version that the user specified
@@ -105,15 +205,14 @@ def push_concatenate_through_getitem(expr, allow_partial=True):
     else:
         new_selection = ((slice(None),) * axis) + (indices,)
 
-    return select_target[new_selection]
+    return v.with_return_shape(
+        select_target[new_selection],
+        np_concatenate_shape([v.shape(child_expr)
+                              for child_expr in expr.args[0]],
+                             axis))
 
-v.pushthrough_impls.update({
-    (p.concatenate_p, core.operator_getitem_p): push_concatenate_through_getitem,
-})
 
-
-
-def push_moveaxis_through_stack(expr, allow_partial=True):
+def push_moveaxis_through_stack(expr, transform=identity):
     assert expr.op == p.moveaxis_p
     assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.stack_p
 
@@ -121,31 +220,40 @@ def push_moveaxis_through_stack(expr, allow_partial=True):
     stack_expr = expr.args[0]
     stack_axis = stack_expr.kwargs.get("axis", 0)
 
-    ndim = len(v.shape(stack_expr))
+    orig_stack_shape = v.shape(stack_expr)
+    ndim = len(orig_stack_shape)
     if source < 0: source += ndim
     if stack_axis < 0: stack_axis += ndim
 
     if stack_axis == source:
         dest = expr.args[2]
-        return vnp.stack(stack_expr.args[0], axis=dest)
-    else:
-        # don't attempt, leave the moveaxis where it is
-        return expr
+        new_shape = list(orig_stack_shape)
+        tmp = new_shape[source]
+        new_shape[source] = new_shape[dest]
+        new_shape[dest] = tmp
+        expr = transform(
+            v.with_return_shape(vnp.stack(stack_expr.args[0], axis=dest),
+                                tuple(new_shape))
+        )
+
+    return expr
 
 
-def push_moveaxis_through_sum(expr, allow_partial=True):
+def push_moveaxis_through_sum(expr, transform=identity):
     assert expr.op == p.moveaxis_p
     assert isinstance(expr.args[0], vp.Vexpr) and expr.args[0].op == p.sum_p
 
     sum_expr = expr.args[0]
     sum_arg0 = sum_expr.args[0]
     if not isinstance(sum_arg0, vp.Vexpr):
-        sum_arg0 = vnp.stack(sum_arg0)
+        sum_arg0 = v.with_return_shape(vnp.stack(sum_arg0),
+                                       np_stack_shape(
+                                           v.shape(sum_expr.args[0]),
+                                           len(sum_arg0), axis=0))
 
     source = expr.args[1]
     dest = expr.args[2]
-    sum_arg0 = vnp.moveaxis(sum_arg0, source, dest)
-    sum_arg0 = v.pushthrough(sum_arg0, p.stack_p)
+    sum_arg0 = transform(vnp.moveaxis(sum_arg0, source, dest))
 
     sum_axis = sum_expr.kwargs.get("axis", None)
 
@@ -153,45 +261,56 @@ def push_moveaxis_through_sum(expr, allow_partial=True):
     trace.insert(dest, trace.pop(source))
     new_axis = trace.index(sum_axis)
 
-    return sum(sum_arg0, axis=new_axis)
+    return transform(
+        v.with_return_shape(
+            vnp.sum(sum_arg0, axis=new_axis),
+            v.shape(expr))
+    )
 
-v.pushthrough_impls.update({
-    (p.moveaxis_p, p.stack_p): push_moveaxis_through_stack,
-    (p.moveaxis_p, p.sum_p): push_moveaxis_through_sum,
-})
 
-
-def push_concatenate_through_stack(expr, allow_partial=True):
+def push_concatenate_through_stack(expr, transform=identity, allow_partial=True):
     assert expr.op == p.concatenate_p
 
-    # initial hack: assume all args are stack_p
-    assert all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
-               for arg in expr.args[0])
-    assert expr.kwargs.get("axis", 0) == 0
+    # initial hack: only do anything if everything is a stack.
+    # thus, this eliminates the cat.
+    if not all(isinstance(arg, vp.Vexpr) and arg.op == p.stack_p
+               for arg in expr.args[0]):
+        return expr
+
+    axis = expr.kwargs.get("axis", 0)
 
     # (when i remove the hack, the result is going to be
-    # shuffle(concatenate([stack, non-stack-exprs])), or remove the outer
-    # concatenate of there are no non-stack-exprs.)
+    # shuffle(cat([stack, non-stack-exprs])), or remove the outer
+    # cat of there are no non-stack-exprs.)
 
-    # todo push vectorize through children
     all_stacked_vexprs = []
     for child_expr in expr.args[0]:
+        assert child_expr.kwargs.get("axis", 0) == axis
         all_stacked_vexprs.extend(child_expr.args[0])
 
-    expr = vnp.stack(all_stacked_vexprs)
-    expr = v._vectorize(expr)
-    return expr
+    assert all(child_expr.kwargs == expr.args[0][0].kwargs
+               for child_expr in expr.args[0][1:])
+    stack_kwargs = expr.args[0][0].kwargs
 
-def np_stack_shape(initial_shape, num_elements, axis=0):
-    """
-    generated by github copilot
-    """
-    if axis < 0:
-        axis += len(initial_shape) + 1
-    return initial_shape[:axis] + (num_elements,) + initial_shape[axis:]
+    return transform(
+        v.with_return_shape(
+            vnp.stack(all_stacked_vexprs, **stack_kwargs),
+            np_stack_shape2([v.shape(d) for d in all_stacked_vexprs],
+                            **stack_kwargs)
+        )
+    )
+
+
+def stack_detect_shape(children):
+    return v.with_return_shape(
+        vnp.stack(children),
+        np_stack_shape2([v.shape(child)
+                         for child in children])
+    )
+
 
 def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
-                                 allow_partial=True):
+                                 transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
 
     exprs_to_stack = expr.args[0]
@@ -213,12 +332,14 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
             else:
                 num_operands = len(r_arg0)
                 # treat array_like as an implicit stack.
-                r_arg0 = vnp.stack(r_arg0)
+                r_arg0 = v.with_return_shape(vnp.stack(r_arg0),
+                                             dict(return_shape=np_stack_shape(
+                                                 v.shape(r_arg0[0]), num_operands)))
 
             if r_axis != stack_axis:
                 prev_shape = v.shape(r_arg0)
                 r_arg0 = vnp.moveaxis(r_arg0, r_axis, stack_axis)
-                r_arg0 = v.pushthrough(r_arg0, child_expr.op)
+                r_arg0 = transform(r_arg0)
                 r_axis = stack_axis
 
             # Incorporate child_expr's computation into a vectorized reduction.
@@ -227,12 +348,22 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
         else:
             # Pass child_expr through. Implement Identity as a reduction of 1
             # element.
-
-            # TODO is this is gross to do a full vectorize here?
-            child_expr = vnp.stack([child_expr], axis=stack_axis)
-            child_expr = v._vectorize(child_expr)
+            child_expr = v.with_return_shape(
+                vnp.stack([child_expr], **expr.kwargs),
+                np_stack_shape(v.shape(child_expr), 1, stack_axis)
+            )
+            child_expr = transform(child_expr)
             all_reduction_operands.append(child_expr)
             at_indices.append(i)
+
+    all_reduction_operands = transform(
+        v.with_return_shape(
+            vnp.concatenate(all_reduction_operands, **expr.kwargs),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in all_reduction_operands],
+                                 stack_axis)
+        )
+    )
 
     at_indices = np.array(at_indices)
 
@@ -251,16 +382,29 @@ def push_stack_through_reduction(reduction_p, parallel_reduction, expr,
 
     return parallel_reduction(result_shape,
                               at_indices,
-                              v._vectorize(vnp.concatenate(all_reduction_operands,
-                                                              axis=stack_axis)))
+                              all_reduction_operands)
+
 
 def parallel_sum(result_shape, indices, source):
-    return vnp.add_at(vnp.zeros(result_shape), indices, source)
+    return v.with_return_shape(
+        vnp.add_at(
+            v.with_return_shape(vnp.zeros(result_shape),
+                                result_shape),
+            indices, source),
+        result_shape)
+
 
 def parallel_prod(result_shape, indices, source):
-    return vnp.multiply_at(vnp.ones(result_shape), indices, source)
+    return v.with_return_shape(
+        vnp.multiply_at(
+            v.with_return_shape(vnp.ones(result_shape),
+                                result_shape),
+            indices,
+            source),
+        result_shape)
 
-def push_concatenate_through_truediv(expr, allow_partial=True):
+
+def push_concatenate_through_truediv(expr, transform=identity, allow_partial=True):
     assert expr.op == p.concatenate_p
 
     # initial hack: assume all args are truediv
@@ -278,12 +422,28 @@ def push_concatenate_through_truediv(expr, allow_partial=True):
         den.append(child_expr.args[1])
 
     axis = expr.kwargs.get("axis", 0)
-    num = v._vectorize(vnp.concatenate(num, axis=axis))
-    den = v._vectorize(vnp.concatenate(den, axis=axis))
+    num_shape = np_concatenate_shape([v.shape(child_expr)
+                                      for child_expr in num],
+                                     axis=axis)
+    den_shape = np_concatenate_shape([v.shape(child_expr)
+                                      for child_expr in den],
+                                     axis=axis)
+    num = transform(
+        v.with_return_shape(vnp.concatenate(num, axis=axis),
+                            num_shape)
+    )
+    den = transform(
+        v.with_return_shape(vnp.concatenate(den, axis=axis),
+                            den_shape)
+    )
 
-    return num / den
+    return transform(
+        v.with_return_shape(
+            num / den,
+            np.broadcast_shapes(v.shape(num), v.shape(den)))
+    )
 
-def push_stack_through_mul(expr, allow_partial=True):
+def push_stack_through_mul(expr, transform=identity, allow_partial=True):
     assert expr.op == p.stack_p
 
     left = []
@@ -343,19 +503,37 @@ def push_stack_through_mul(expr, allow_partial=True):
                          if axis < 0
                          else -len(implicit_left_shape) + axis)
 
-    left = v._vectorize(vnp.stack(left, **kwargs))
+    left = transform(
+        v.with_return_shape(
+            vnp.stack(left, **kwargs),
+            actual_left_shape))
     if implicit_left_shape[implicit_neg_axis:] \
        != actual_left_shape[implicit_neg_axis:]:
-        left = vnp.reshape(left, implicit_left_shape[implicit_neg_axis:])
+        new_shape = implicit_left_shape[implicit_neg_axis:]
+        left = v.with_return_shape(
+            vnp.reshape(left, new_shape),
+            new_shape)
 
-    right = v._vectorize(vnp.stack(right, **kwargs))
+    right = transform(
+        v.with_return_shape(
+            vnp.stack(right, **kwargs),
+            actual_right_shape))
     if implicit_right_shape[implicit_neg_axis:] \
        != actual_right_shape[implicit_neg_axis:]:
-        right = vnp.reshape(right, implicit_right_shape[implicit_neg_axis:])
+        new_shape = implicit_right_shape[implicit_neg_axis:]
+        right = v.with_return_shape(
+            vnp.reshape(right, new_shape),
+            new_shape)
 
-    return left * right
+    return transform(
+        v.with_return_shape(
+            left * right,
+            np.broadcast_shapes(v.shape(left), v.shape(right))
+        )
+    )
 
-def push_concatenate_through_mul(expr, allow_partial=True):
+
+def push_concatenate_through_mul(expr, transform=identity, allow_partial=True):
     assert expr.op == p.concatenate_p
 
     axis = expr.kwargs.get("axis", 0)
@@ -381,18 +559,61 @@ def push_concatenate_through_mul(expr, allow_partial=True):
             left.append(np.ones(num_values))
             right.append(child_expr)
 
-    left = v._vectorize(vnp.concatenate(left, axis=axis))
-    right = v._vectorize(vnp.concatenate(right, axis=axis))
+    left = transform(
+        v.with_return_shape(
+            vnp.concatenate(left, axis=axis),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in left], axis=axis))
+    )
+    right = transform(
+        v.with_return_shape(
+            vnp.concatenate(right, axis=axis),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in right], axis=axis))
+    )
 
-    return left * right
+    return transform(
+        v.with_return_shape(
+            left * right,
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in expr.args[0]],
+                                 axis=axis)))
 
-v.pushthrough_impls.update({
-    (p.concatenate_p, p.stack_p): push_concatenate_through_stack,
-    (p.stack_p, p.sum_p): partial(push_stack_through_reduction, p.sum_p,
-                                  parallel_sum),
-    (p.stack_p, p.prod_p): partial(push_stack_through_reduction, p.prod_p,
-                                   parallel_prod),
-    (p.concatenate_p, core.operator_truediv_p): push_concatenate_through_truediv,
-    (p.stack_p, core.operator_mul_p): push_stack_through_mul,
-    (p.concatenate_p, core.operator_mul_p): push_concatenate_through_mul,
+
+v.implicit_stack_ops.update({
+    p.sum_p: stack_detect_shape,
+    p.prod_p: stack_detect_shape,
 })
+
+
+impls.push_stack_through_op.update({
+    p.sum_p: partial(push_stack_through_reduction, p.sum_p,
+                     parallel_sum),
+    p.prod_p: partial(push_stack_through_reduction, p.prod_p,
+                      parallel_prod),
+    core.operator_mul_p: push_stack_through_mul,
+})
+
+impls.push_concatenate_through_op.update({
+    core.operator_getitem_p: push_concatenate_through_getitem,
+    core.operator_truediv_p: push_concatenate_through_truediv,
+    core.operator_mul_p: push_concatenate_through_mul,
+    p.stack_p: push_concatenate_through_stack,
+})
+
+
+impls.push_moveaxis_through_op.update({
+    p.stack_p: push_moveaxis_through_stack,
+    p.sum_p: push_moveaxis_through_sum,
+})
+
+
+v.phase_ops[0] += [
+    (p.stack_p, stack_pushthrough),
+]
+
+v.phase_ops[1] += [
+    (p.stack_p, stack_pushthrough),
+    (p.concatenate_p, concatenate_pushthrough),
+    (p.moveaxis_p, moveaxis_pushthrough),
+]

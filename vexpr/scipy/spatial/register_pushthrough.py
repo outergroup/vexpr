@@ -1,15 +1,23 @@
 import numpy as np
 
 import vexpr.numpy as vnp
+import vexpr.numpy.impls as impls
 import vexpr.numpy.primitives as np_p
 import vexpr.custom.scipy.primitives as csp_p
 import vexpr.vectorization as v
 from vexpr import core
 from vexpr.custom.scipy import cdist_multi
+from vexpr.numpy.utils import (
+    np_concatenate_shape,
+)
 
 from . import primitives as p
 
-def push_stack_through_cdist(expr, allow_partial=True):
+
+def identity(x): return x
+
+
+def push_stack_through_cdist(expr, transform=identity, allow_partial=True):
     assert expr.op == np_p.stack_p
     assert all(child_expr.op == p.cdist_p for child_expr in expr.args[0])
 
@@ -27,18 +35,30 @@ def push_stack_through_cdist(expr, allow_partial=True):
         shape = v.shape(child_expr.args[0])
         length = shape[-1]
         lengths.append(length)
-        child_matrix_shapes.append(shape[:-1])
+        child_matrix_shapes.append(v.shape(child_expr))
 
-    left = v._vectorize(vnp.concatenate(left, axis=-1))
-    right = v._vectorize(vnp.concatenate(right, axis=-1))
+    left = transform(
+        v.with_return_shape(
+            vnp.concatenate(left, axis=-1),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in left],
+                                 -1)
+        )
+    )
+    right = transform(
+        v.with_return_shape(
+            vnp.concatenate(right, axis=-1),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in right],
+                                 -1)
+        )
+    )
 
     kwargs = dict(
         lengths=np.array(lengths)
     )
     if "axis" in expr.kwargs:
         kwargs["axis"] = expr.kwargs["axis"]
-
-    ret = cdist_multi(left, right, **kwargs)
 
     # Compute shape of result
     child_matrix_shape = child_matrix_shapes[0]
@@ -51,13 +71,12 @@ def push_stack_through_cdist(expr, allow_partial=True):
         axis += len(result_shape) + 1
     result_shape = result_shape[:axis] + (len(lengths),) + result_shape[axis:]
 
-    return v.with_return_shape(ret,
-                               result_shape)
+    return v.with_return_shape(
+        cdist_multi(left, right, **kwargs),
+        result_shape)
 
-v.pushthrough_impls[(np_p.stack_p, p.cdist_p)] = push_stack_through_cdist
 
-
-def push_concatenate_through_cdist_multi(expr, allow_partial=True):
+def push_concatenate_through_cdist_multi(expr, transform=identity, allow_partial=True):
     assert expr.op == np_p.concatenate_p
     assert all(child_expr.op == csp_p.cdist_multi_p for child_expr in expr.args[0])
 
@@ -81,8 +100,22 @@ def push_concatenate_through_cdist_multi(expr, allow_partial=True):
         raise ValueError("Expected same axes", axes)
     axis = axes[0]
 
-    left = v._vectorize(vnp.concatenate(left, axis=-1))
-    right = v._vectorize(vnp.concatenate(right, axis=-1))
+    left = transform(
+        v.with_return_shape(
+            vnp.concatenate(left, axis=-1),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in left],
+                                 -1)
+        )
+    )
+    right = transform(
+        v.with_return_shape(
+            vnp.concatenate(right, axis=-1),
+            np_concatenate_shape([v.shape(child_expr)
+                                  for child_expr in right],
+                                 -1)
+        )
+    )
 
     kwargs = dict(
         lengths=np.concatenate(lengths)
@@ -90,6 +123,17 @@ def push_concatenate_through_cdist_multi(expr, allow_partial=True):
     if axis is not None:
         kwargs["axis"] = axis
 
-    return cdist_multi(left, right, **kwargs)
+    return v.with_return_shape(
+        cdist_multi(left, right, **kwargs),
+        np_concatenate_shape([v.shape(child_expr)
+                              for child_expr in expr.args[0]],
+                             axis=concat_axis)
+    )
 
-v.pushthrough_impls[(np_p.concatenate_p, csp_p.cdist_multi_p)] = push_concatenate_through_cdist_multi
+
+impls.push_stack_through_op.update({
+    p.cdist_p: push_stack_through_cdist
+})
+impls.push_concatenate_through_op.update({
+    csp_p.cdist_multi_p: push_concatenate_through_cdist_multi
+})

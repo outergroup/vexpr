@@ -88,8 +88,6 @@ def cat_pushthrough(expr, transform=identity):
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
     if len(vexpr_ops) > 0:
-        # TODO add a phase0 that first pushes through any stacks
-
         for allow_partial in (False, True):
             for op in vexpr_ops:
                 try:
@@ -929,7 +927,7 @@ def push_stack_through_cdist(expr, transform=identity, allow_partial=True):
         dim += len(result_shape) + 1
     result_shape = result_shape[:dim] + (len(lengths),) + result_shape[dim:]
 
-    applicable =  transform(
+    applicable = transform(
         v.with_return_shape(
             vctorch.cdist_multi(left, right, **kwargs),
             result_shape)

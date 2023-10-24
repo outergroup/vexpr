@@ -95,37 +95,6 @@ def traced_call(expr, context):
     return expr, result
 
 
-# {op: f(shapes, expr)}
-vectorize_impls = {}
-
-def _vectorize(expr):
-    # assert isinstance(expr, VexprWithMetadata)
-
-    impl = vectorize_impls.get(expr.op, None)
-    if impl is None:
-        print("No vectorization support for", expr.op)
-        return expr
-    else:
-        return impl(expr)
-
-
-# {(op, child_op): f(expr, allow_partial)}
-pushthrough_impls = {}
-
-def pushthrough(expr, child_op, allow_partial=True):
-    # assert isinstance(expr, VexprWithMetadata)
-
-    impl = pushthrough_impls.get((expr.op, child_op), None)
-    if impl is None:
-        print("No pushthrough support for", expr.op, child_op)
-        raise CannotVectorize()
-
-    return impl(expr, allow_partial)
-
-def single_pushthrough(expr, allow_partial=True):
-    return pushthrough(expr, expr.args[0].op, allow_partial=allow_partial)
-
-
 # {(op, child_op): f(expr)}
 lift_impls = {}
 
@@ -171,7 +140,7 @@ additional_transforms = [
 ]
 
 
-def _vectorize2(expr, phases=tuple(range(len(phase_ops)))):
+def _vectorize(expr, phases=tuple(range(len(phase_ops)))):
     """
     Function that orchestrates the vectorization process.
     """
@@ -274,31 +243,6 @@ def catching_recursive_pushthrough(ops):
     return _recursive_pushthrough
 
 
-################################################################################
-# Vectorize implementations for operators
-################################################################################
-
-def unary_elementwise_vectorize(expr):
-    return Vexpr(expr.op, (_vectorize(expr.args[0]),), expr.kwargs)
-
-def operator_vectorize(expr):
-    args = tuple(_vectorize(arg) for arg in expr.args)
-    return Vexpr(expr.op, args, {})
-
-def identity(expr): return expr
-
-vectorize_impls.update({
-    core.symbol_p: identity,
-    core.operator_add_p: operator_vectorize,
-    core.operator_mul_p: operator_vectorize,
-    core.operator_truediv_p: operator_vectorize,
-    core.operator_pow_p: operator_vectorize,
-    core.operator_matmul_p: operator_vectorize,
-    core.operator_neg_p: unary_elementwise_vectorize,
-    core.operator_getitem_p: operator_vectorize,
-})
-
-
 class CannotVectorize(Exception):
     pass
 
@@ -325,27 +269,17 @@ def strip_metadata(expr):
 
 
 def call_and_vectorize(vexpr_caller, i_alternate, **kwargs):
-    # Hack to detect whether to use old or new vectorize
-    if sum(len(ops) for ops in phase_ops) > 0:
-        _vec = _vectorize2
-    else:
-        _vec = _vectorize
-
     expr, result = traced_call(vexpr_caller.vexpr, kwargs)
-    vexpr_caller.vexpr = vp.bottom_up_transform(strip_metadata, _vec(expr))
+    vexpr_caller.vexpr = vp.bottom_up_transform(strip_metadata, _vectorize(expr))
     del vexpr_caller.alternate_calls[i_alternate]
     return result
 
 
 def vectorize(f_or_expr, example_inputs=None, phase_override=None):
     if example_inputs is not None:
-        # Hack to detect whether to use old or new vectorize
-        if sum(len(ops) for ops in phase_ops) > 0:
-            _vec = _vectorize2
-            if phase_override is not None:
-                _vec = partial(_vec, phases=phase_override)
-        else:
-            _vec = _vectorize
+        _vec = _vectorize
+        if phase_override is not None:
+            _vec = partial(_vec, phases=phase_override)
         if isinstance(f_or_expr, Vexpr):
             expr, result = traced_call(f_or_expr, example_inputs)
             return strip_metadata(_vec(expr))

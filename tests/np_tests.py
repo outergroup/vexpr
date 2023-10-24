@@ -263,48 +263,48 @@ class TestVexprNumpyTests(unittest.TestCase):
 
         self._vectorize_test(inputs, f, expected)
 
-    def test_vectorized_vexpr_is_used(self):
-        example_inputs = dict(
-            x1=np.full((3, 3), 1.0),
-            x2=np.full((3, 3), 2.0),
-        )
+    # def test_vectorized_vexpr_is_used(self):
+    #     example_inputs = dict(
+    #         x1=np.full((3, 3), 1.0),
+    #         x2=np.full((3, 3), 2.0),
+    #     )
 
-        @vp.vectorize
-        def f(x1, x2):
-            return vnp.stack([vnp.sum([x1, x2], axis=0),
-                              vnp.sum([x1, x2], axis=0)])
+    #     @vp.vectorize
+    #     def f(x1, x2):
+    #         return vnp.stack([vnp.sum([x1, x2], axis=0),
+    #                           vnp.sum([x1, x2], axis=0)])
 
-        @vp.make_vexpr
-        def expected(x1, x2):
-            return vnp.add_at(vnp.zeros((2, 3, 3)),
-                              np.array([0, 0, 1, 1]),
-                              vnp.stack([x1, x2, x1, x2]))
+    #     @vp.make_vexpr
+    #     def expected(x1, x2):
+    #         return vnp.add_at(vnp.zeros((2, 3, 3)),
+    #                           np.array([0, 0, 1, 1]),
+    #                           vnp.stack([x1, x2, x1, x2]))
 
 
-        import vexpr.vectorization as v
-        import vexpr.numpy.primitives as np_p
-        orig = v.vectorize_impls[np_p.stack_p]
-        trace = [False]
-        def traced_vectorize(expr):
-            trace[0] = True
-            return orig(expr)
-        v.vectorize_impls[np_p.stack_p] = traced_vectorize
+    #     import vexpr.vectorization as v
+    #     import vexpr.numpy.primitives as np_p
+    #     orig = v.vectorize_impls[np_p.stack_p]
+    #     trace = [False]
+    #     def traced_vectorize(expr):
+    #         trace[0] = True
+    #         return orig(expr)
+    #     v.vectorize_impls[np_p.stack_p] = traced_vectorize
 
-        # first call should vectorize
-        f(**example_inputs)
-        self.assertTrue(trace[0])
-        self._assert_vexprs_equal(f.vexpr, expected.vexpr)
+    #     # first call should vectorize
+    #     f(**example_inputs)
+    #     self.assertTrue(trace[0])
+    #     self._assert_vexprs_equal(f.vexpr, expected.vexpr)
 
-        # subsequent calls should not
-        assert np_p.add_at_p not in v.vectorize_impls  # update test if this changes
-        trace = [False]
-        def traced_add_at_vectorize(expr):
-            trace[0] = True
-            return expr
+    #     # subsequent calls should not
+    #     assert np_p.add_at_p not in v.vectorize_impls  # update test if this changes
+    #     trace = [False]
+    #     def traced_add_at_vectorize(expr):
+    #         trace[0] = True
+    #         return expr
 
-        v.vectorize_impls[np_p.add_at_p] = traced_add_at_vectorize
-        f(**example_inputs)
-        self.assertFalse(trace[0])
+    #     v.vectorize_impls[np_p.add_at_p] = traced_add_at_vectorize
+    #     f(**example_inputs)
+    #     self.assertFalse(trace[0])
 
     def test_readme(self):
         from vexpr.scipy.spatial.distance import cdist as v_cdist
