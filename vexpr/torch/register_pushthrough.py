@@ -7,6 +7,7 @@ import vexpr as vp
 import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as cp
+import vexpr.primitives as vpp
 import vexpr.torch as vtorch
 import vexpr.torch.impls as impls
 import vexpr.torch.primitives as p
@@ -32,9 +33,9 @@ from vexpr.torch.utils import (
 
 PRIORITIZED_OPS = set([
     p.stack_p, p.cat_p,
-    p.sum_p, p.prod_p, core.operator_add_p,
-    core.operator_mul_p, core.operator_truediv_p,
-    core.operator_matmul_p,
+    p.sum_p, p.prod_p, vpp.operator_add_p,
+    vpp.operator_mul_p, vpp.operator_truediv_p,
+    vpp.operator_matmul_p,
     cp.sum_multi_p, cp.prod_multi_p, cp.fast_prod_positive_p,
     cp.fast_prod_positive_multi_p, cp.mul_along_dim_p,
     cp.shuffle_p,
@@ -83,7 +84,7 @@ def cat_pushthrough(expr, transform=identity):
                                    for v in expr.args[0]
                                    if isinstance(v, vp.Vexpr)))
 
-    vexpr_ops = [op for op in vexpr_ops if op != core.symbol_p]
+    vexpr_ops = [op for op in vexpr_ops if op != vpp.symbol_p]
     vexpr_ops = ([op for op in vexpr_ops if op in PRIORITIZED_OPS]
                  + [op for op in vexpr_ops if op not in PRIORITIZED_OPS])
 
@@ -162,7 +163,7 @@ def push_cat_through_index_select_symbols(expr):
     select_targets = [sub_expr.args[0]
                       for sub_expr in expr.args[0]]
     select_target = select_targets[0]
-    if not all(target.op == core.symbol_p for target in select_targets):
+    if not all(target.op == vpp.symbol_p for target in select_targets):
         raise NotImplementedError()
     if not all(target == select_target
                for target in select_targets):
@@ -212,7 +213,7 @@ def push_cat_through_index_select(expr, transform=identity, allow_partial=True):
     assert expr.op == p.cat_p
 
     if any(child_expr.op == p.index_select_p
-           and child_expr.args[0].op == core.symbol_p
+           and child_expr.args[0].op == vpp.symbol_p
            for child_expr in expr.args[0]):
         return push_cat_through_index_select_symbols(expr)
 
@@ -272,14 +273,14 @@ def push_cat_through_getitem(expr, transform=identity, allow_partial=True):
     # TODO: if any child is not a getitem, then push through all the getitems,
     # cat with the non-getitems, and insert a shuffle after everything
     # to correct the order.
-    if not all(sub_expr.op == core.operator_getitem_p
+    if not all(sub_expr.op == vpp.operator_getitem_p
                for sub_expr in expr.args[0]):
         raise NotImplementedError()
 
     select_targets = [sub_expr.args[0]
                       for sub_expr in expr.args[0]]
     select_target = select_targets[0]
-    if not all(target.op == core.symbol_p for target in select_targets):
+    if not all(target.op == vpp.symbol_p for target in select_targets):
         raise NotImplementedError()
     if not all(target == select_target
                for target in select_targets):
@@ -630,7 +631,7 @@ def push_cat_through_truediv(expr, transform=identity, allow_partial=True):
     # TODO: add similar treatment of "*_through_mul", dividing by 1.0. It's
     # easier than mul, since it's unambiguous; we can always put 1.0 in the
     # denominator.
-    assert all(isinstance(arg, vp.Vexpr) and arg.op == core.operator_truediv_p
+    assert all(isinstance(arg, vp.Vexpr) and arg.op == vpp.operator_truediv_p
                for arg in expr.args[0])
 
     num = []
@@ -669,7 +670,7 @@ def push_stack_through_mul(expr, transform=identity, allow_partial=True):
     identity = False
     actual_indices = []
     for i, child_expr in enumerate(expr.args[0]):
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op == core.operator_mul_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == vpp.operator_mul_p:
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
             actual_indices.append(i)
@@ -742,7 +743,7 @@ def push_cat_through_mul(expr, transform=identity, allow_partial=True):
     identity = False
     for child_expr in expr.args[0]:
         n = v.shape(child_expr)[dim]
-        if isinstance(child_expr, vp.Vexpr) and child_expr.op == core.operator_mul_p:
+        if isinstance(child_expr, vp.Vexpr) and child_expr.op == vpp.operator_mul_p:
             left.append(child_expr.args[0])
             right.append(child_expr.args[1])
             actual_indices += list(range(base, base + n))
@@ -990,31 +991,31 @@ v.implicit_stack_ops.update({
 })
 
 impls.push_stack_through_op.update({
-    core.symbol_p: pushthrough_return_self,
+    vpp.symbol_p: pushthrough_return_self,
     p.sum_p: partial(push_stack_through_reduction, p.sum_p, vctorch.sum_multi,
                      0.),
     p.prod_p: partial(push_stack_through_reduction, p.prod_p,
                       vctorch.prod_multi, 1.),
     p.exp_p: partial(push_stack_through_unary_elementwise, p.exp_p),
-    core.operator_mul_p: push_stack_through_mul,
-    core.operator_neg_p: partial(push_stack_through_unary_elementwise,
-                                 core.operator_neg_p),
+    vpp.operator_mul_p: push_stack_through_mul,
+    vpp.operator_neg_p: partial(push_stack_through_unary_elementwise,
+                                vpp.operator_neg_p),
     p.cdist_p: push_stack_through_cdist,
 })
 
 impls.push_cat_through_op.update({
     p.index_select_p: push_cat_through_index_select,
-    core.operator_getitem_p: push_cat_through_getitem,
+    vpp.operator_getitem_p: push_cat_through_getitem,
     p.zeros_p: partial(push_cat_through_zeros_ones, p.zeros_p, vtorch.zeros),
     p.ones_p: partial(push_cat_through_zeros_ones, p.ones_p, vtorch.ones),
     p.unsqueeze_p: push_cat_through_unsqueeze,
     p.stack_p: push_cat_through_stack,
     p.cat_p: push_cat_through_cat,
     p.exp_p: partial(push_cat_through_unary_elementwise, p.exp_p),
-    core.operator_truediv_p: push_cat_through_truediv,
-    core.operator_mul_p: push_cat_through_mul,
-    core.operator_neg_p: partial(push_cat_through_unary_elementwise,
-                                 core.operator_neg_p),
+    vpp.operator_truediv_p: push_cat_through_truediv,
+    vpp.operator_mul_p: push_cat_through_mul,
+    vpp.operator_neg_p: partial(push_cat_through_unary_elementwise,
+                                vpp.operator_neg_p),
     p.scatter_p: push_cat_through_scatter,
 })
 
@@ -1024,7 +1025,7 @@ impls.push_moveaxis_through_op.update({
 })
 
 impls.push_index_select_through_op.update({
-    core.symbol_p: raise_cannot_vectorize,
+    vpp.symbol_p: raise_cannot_vectorize,
 })
 
 impls.push_index_select_through_op2.update({

@@ -4,7 +4,7 @@ from functools import partial
 import torch
 
 import vexpr as vp
-import vexpr.core as core
+import vexpr.primitives as vpp
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.primitives as cp
 import vexpr.torch as vtorch
@@ -104,6 +104,6 @@ v.unary_elementwise_registration_steps.append(register_elementwise_op)
 v.lift_impls.update({
     (p.exp_p, cp.shuffle_p): partial(lift_shuffle_from_unary_elementwise,
                                      p.exp_p),
-    (core.operator_neg_p, cp.shuffle_p): partial(
-        lift_shuffle_from_unary_elementwise, core.operator_neg_p),
+    (vpp.operator_neg_p, cp.shuffle_p): partial(
+        lift_shuffle_from_unary_elementwise, vpp.operator_neg_p),
 })

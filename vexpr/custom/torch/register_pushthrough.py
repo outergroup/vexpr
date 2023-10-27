@@ -4,10 +4,10 @@ from functools import partial
 import torch
 
 import vexpr as vp
-import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.impls as cimpls
 import vexpr.custom.torch.primitives as cp
+import vexpr.primitives as vpp
 import vexpr.torch as vtorch
 import vexpr.torch.impls as impls
 import vexpr.torch.primitives as p
@@ -498,7 +498,7 @@ def push_concat_through_heads_tails(expr, transform=identity, allow_partial=True
 
 def push_shuffle_through_truediv(expr, transform=identity, allow_partial=True):
     assert expr.op == cp.shuffle_p
-    assert expr.args[0].op == core.operator_truediv_p
+    assert expr.args[0].op == vpp.operator_truediv_p
 
     indices = expr.args[1]
 
@@ -889,7 +889,7 @@ impls.push_cat_through_op.update({
 })
 
 cimpls.push_shuffle_through_op.update({
-    core.operator_truediv_p: push_shuffle_through_truediv,
+    vpp.operator_truediv_p: push_shuffle_through_truediv,
     cp.mul_along_dim_p: push_shuffle_through_mul_along_dim,
     p.index_select_p: push_shuffle_through_index_select,
     cp.cdist_multi_p: identity_pushthrough,
