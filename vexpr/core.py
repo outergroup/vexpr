@@ -5,6 +5,7 @@ are built up directly by the user.
 """
 
 import inspect
+from functools import partial
 from pprint import pformat
 from typing import NamedTuple
 
@@ -49,32 +50,11 @@ class Vexpr(NamedTuple):
         return operator_getitem(self, index)
 
     def __repr__(self):
-        child_lines = []
-
-        if len(self.args) == 1:
-            child_lines += pformat(self.args[0]).split('\n')
-        else:
-            for arg in self.args:
-                operand_str = pformat(arg) + ","
-                child_lines += operand_str.split('\n')
-
-        extra_lines = ([", ".join([f"{k}={repr(v)}"
-                                   for k, v in self.kwargs.items()])]
-                       if len(self.kwargs) > 0
-                       else [])
-
-        lines = child_lines + extra_lines
-
-        main_str = self.op.name + '('
-        if lines:
-            if len(lines) == 1:
-                main_str += lines[0]
-            else:
-                newline_space = "\n  "
-                main_str += newline_space + newline_space.join(lines) + '\n'
-
-        main_str += ')'
-        return main_str
+        try:
+            impl = repr_impls[self.op]
+        except KeyError:
+            impl = repr_impls["default"]
+        return impl(self)
 
 
 ################################################################################
@@ -179,8 +159,90 @@ operator_getitem_p, operator_getitem = _p_and_constructor("operator.getitem")
 constant_p = Primitive("constant")
 constant = lambda value: Vexpr(constant_p, (value,), {})
 
+
 ################################################################################
-# Default Impls
+# Default repr Impls
+################################################################################
+
+repr_impls = {}
+
+def default_vexpr_repr(expr):
+    if expr.op in repr_impls:
+        return repr_impls
+
+    child_lines = []
+
+    if len(expr.args) == 1:
+        child_lines += pformat(expr.args[0]).split('\n')
+    else:
+        for i, arg in enumerate(expr.args):
+            operand_str = pformat(arg)
+            if i < len(expr.args) - 1:
+                operand_str += ","
+            child_lines += operand_str.split('\n')
+
+    extra_lines = ([", ".join([f"{k}={repr(v)}"
+                               for k, v in expr.kwargs.items()])]
+                   if len(expr.kwargs) > 0
+                   else [])
+
+    if len(extra_lines) == 0:
+        lines = child_lines
+    else:
+        if len(child_lines) == 1:
+            lines = [child_lines[0] + ","] + extra_lines
+        elif len(child_lines) > 1:
+            if "=" in child_lines[-1]:
+                # if the final child_line is just kwargs from a deeper vexpr,
+                # don't create a newline.
+                lines = (child_lines[:-1]
+                         + [child_lines[-1] + ", " + extra_lines[0]]
+                         + extra_lines[1:])
+            else:
+                lines = (child_lines[:-1]
+                         + [child_lines[-1] + ", "]
+                         + extra_lines)
+        else:
+            lines = extra_lines
+
+    main_str = expr.op.name + '('
+    if lines:
+        if len(lines) == 1:
+            main_str += lines[0]
+        else:
+            newline_space = "\n  "
+            main_str += newline_space + newline_space.join(lines)
+
+    main_str += ')'
+    return main_str
+
+
+def infix_repr(separator, expr):
+    left = pformat(expr.args[0])
+    right = pformat(expr.args[1])
+
+    left_lines = left.split("\n")
+    if len(left_lines) == 1:
+        return f"{left} {separator} {right}"
+    else:
+        return f"{left}\n{separator} {right}"
+
+
+repr_impls.update({
+    "default": default_vexpr_repr,
+    symbol_p: lambda expr: expr.args[0],
+    operator_add_p: partial(infix_repr, "+"),
+    operator_mul_p: partial(infix_repr, "*"),
+    operator_truediv_p: partial(infix_repr, "/"),
+    operator_pow_p: partial(infix_repr, "**"),
+    operator_matmul_p: partial(infix_repr, "@"),
+    operator_neg_p: lambda expr: f"-{pformat(expr.args[0])}",
+    operator_getitem_p: lambda expr: f"{pformat(expr.args[0])}[{pformat(expr.args[1])}]",
+})
+
+
+################################################################################
+# Default eval Impls
 ################################################################################
 
 import operator
@@ -225,7 +287,7 @@ def partial_eval_(expr, context):
             if not isinstance(v, Vexpr):
                 context2[name] = v
         return partial_eval_(expr.args[1], context2)
-    else:
+    elif expr.op in eval_impls:
         impl = eval_impls[expr.op]
         args = evaluate_args(expr.args, context, partial_eval_)
 
@@ -242,6 +304,11 @@ def partial_eval_(expr, context):
             return impl(*args, **expr.kwargs)
         else:
             return Vexpr(expr.op, args, expr.kwargs)
+    else:
+        # If it's not implemented, it might be an intermediate op that is never
+        # intended be be implemented, but will instead be transformed later into
+        # an implemented op.
+        return expr
 
 
 

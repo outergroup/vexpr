@@ -49,35 +49,13 @@ print(f.vexpr)
 
 ```text
 numpy.sum(
-  [operator.mul(
-    symbol('w1'),
-    scipy.spatial.distance.cdist(
-      operator.getitem(
-        symbol('x1'),
-        (Ellipsis, [0, 1, 2]),
-      ),
-      operator.getitem(
-        symbol('x2'),
-        (Ellipsis, [0, 1, 2]),
-      ),
-    ),
-  ),
-   operator.mul(
-    symbol('w2'),
-    scipy.spatial.distance.cdist(
-      operator.getitem(
-        symbol('x1'),
-        (Ellipsis, [0, 3, 4]),
-      ),
-      operator.getitem(
-        symbol('x2'),
-        (Ellipsis, [0, 3, 4]),
-      ),
-    ),
-  )]
-  axis=0
-)
-
+  [w1 * scipy.spatial.distance.cdist(
+    x1[(Ellipsis, [0, 1, 2])],
+    x2[(Ellipsis, [0, 1, 2])]),
+   w2 * scipy.spatial.distance.cdist(
+    x1[(Ellipsis, [0, 3, 4])],
+    x2[(Ellipsis, [0, 3, 4])])],
+  axis=0)
 ```
 
 This `Vexpr` data structure is ready to be executed without any further compilation, but the real magic occurs when you call `f` for the first time, triggering compilation into a vectorized `Vexpr`.
@@ -97,25 +75,13 @@ print(f.vexpr)
 
 ```text
 numpy.sum(
-  operator.mul(
-    numpy.reshape(
-      numpy.stack([symbol('w1'), symbol('w2')]),
-      (2, 1, 1),
-    ),
-    custom.scipy.cdist_multi(
-      operator.getitem(
-        symbol('x1'),
-        (Ellipsis, array([0, 1, 2, 0, 3, 4])),
-      ),
-      operator.getitem(
-        symbol('x2'),
-        (Ellipsis, array([0, 1, 2, 0, 3, 4])),
-      ),
-      lengths=array([3, 3])
-    ),
-  )
-  axis=0
-)
+  numpy.reshape(
+    numpy.stack([w1, w2]),
+    (2, 1, 1))
+  * custom.scipy.cdist_multi(
+    x1[(Ellipsis, array([0, 1, 2, 0, 3, 4]))],
+    x2[(Ellipsis, array([0, 1, 2, 0, 3, 4]))],
+    lengths=array([3, 3])), axis=0)
 ```
 
 This is an equivalent expression with fewer commands. It indexes into `x1` and `x2` once, not twice, computes distance once, and uses a single vectorized multiply. This vectorized expression would have been error-prone to write manually.
@@ -129,24 +95,12 @@ print(inference_f.vexpr)
 
 ```text
 numpy.sum(
-  operator.mul(
-    array([[[0.75]],
-           [[0.25]]]),
-    custom.scipy.cdist_multi(
-      operator.getitem(
-        symbol('x1'),
-        (Ellipsis, array([0, 1, 2, 0, 3, 4])),
-      ),
-      operator.getitem(
-        symbol('x2'),
-        (Ellipsis, array([0, 1, 2, 0, 3, 4])),
-      ),
-      lengths=array([3, 3])
-    ),
-  )
-  axis=0
-)
-
+  array([[[0.75]],
+         [[0.25]]])
+  * custom.scipy.cdist_multi(
+    x1[(Ellipsis, array([0, 1, 2, 0, 3, 4]))],
+    x2[(Ellipsis, array([0, 1, 2, 0, 3, 4]))],
+    lengths=array([3, 3])), axis=0)
 ```
 
 This is a faster expression because it no longer has to build up a np.array on every execution. Partial evaluation proactively runs every part of the expression that depends only on the partial input. In this expression, you can see this from the fact that the `numpy.reshape` has already occurred on the array.
