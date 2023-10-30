@@ -12,3 +12,4 @@ from .core import (
 from .transformations import bottom_up_transform
 from .to_python import to_python
 from .vectorization import vectorize
+from . import primitives
