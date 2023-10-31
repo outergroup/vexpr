@@ -287,8 +287,7 @@ def partial_eval_(expr, context):
             if not isinstance(v, Vexpr):
                 context2[name] = v
         return partial_eval_(expr.args[1], context2)
-    elif expr.op in eval_impls:
-        impl = eval_impls[expr.op]
+    else :
         args = evaluate_args(expr.args, context, partial_eval_)
 
         ready = True
@@ -300,16 +299,11 @@ def partial_eval_(expr, context):
                     if isinstance(subarg, Vexpr):
                         ready = False
 
-        if ready:
+        if ready and expr.op in eval_impls:
+            impl = eval_impls[expr.op]
             return impl(*args, **expr.kwargs)
         else:
             return Vexpr(expr.op, args, expr.kwargs)
-    else:
-        # If it's not implemented, it might be an intermediate op that is never
-        # intended be be implemented, but will instead be transformed later into
-        # an implemented op.
-        return expr
-
 
 
 ################################################################################
