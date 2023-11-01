@@ -48,8 +48,8 @@ print(f.vexpr)
 ```
 
 ```text
-numpy.sum(
-  [w1 * scipy.spatial.distance.cdist(
+numpy.sum([
+   w1 * scipy.spatial.distance.cdist(
     x1[(Ellipsis, [0, 1, 2])],
     x2[(Ellipsis, [0, 1, 2])]),
    w2 * scipy.spatial.distance.cdist(

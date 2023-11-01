@@ -172,14 +172,24 @@ def default_vexpr_repr(expr):
 
     child_lines = []
 
-    if len(expr.args) == 1:
-        child_lines += pformat(expr.args[0]).split('\n')
-    else:
-        for i, arg in enumerate(expr.args):
-            operand_str = pformat(arg)
-            if i < len(expr.args) - 1:
-                operand_str += ","
-            child_lines += operand_str.split('\n')
+    use_initial_newline = True
+
+    for i, arg in enumerate(expr.args):
+        operand_str = pformat(arg)
+        operand_lines = operand_str.split('\n')
+
+        if len(operand_lines) > 1:
+            if operand_lines[0].startswith('(') \
+               or operand_lines[0].startswith('[') \
+               or operand_lines[0].startswith('{'):
+                use_initial_newline = False
+                operand_lines = ([operand_lines[0][:1]]
+                                 + [" " + operand_lines[0][1:]]
+                                 + operand_lines[1:])
+
+        if i < len(expr.args) - 1:
+            operand_lines[-1] += ","
+        child_lines += operand_lines
 
     extra_lines = ([", ".join([f"{k}={repr(v)}"
                                for k, v in expr.kwargs.items()])]
@@ -206,12 +216,9 @@ def default_vexpr_repr(expr):
             lines = extra_lines
 
     main_str = expr.op.name + '('
-    if lines:
-        if len(lines) == 1:
-            main_str += lines[0]
-        else:
-            newline_space = "\n  "
-            main_str += newline_space + newline_space.join(lines)
+    if len(lines) > 1 and use_initial_newline:
+        main_str += "\n  "
+    main_str += "\n  ".join(lines)
 
     main_str += ')'
     return main_str
