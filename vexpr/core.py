@@ -22,6 +22,9 @@ class Vexpr(NamedTuple):
     def update_args(self, args):
         return Vexpr(self.op, args, self.kwargs)
 
+    def new(self, op, args, kwargs):
+        return Vexpr(op, args, kwargs)
+
     def __call__(self, *args, **kwargs):
         return operator_call(self, *args, **kwargs)
 
@@ -55,6 +58,25 @@ class Vexpr(NamedTuple):
         except KeyError:
             impl = repr_impls["default"]
         return impl(self)
+
+
+class VexprWithMetadata(Vexpr):
+    metadata: dict
+
+    def __new__(cls, op, args, kwargs, metadata):
+        self = super().__new__(cls, op, args, kwargs)
+        self.metadata = metadata
+        return self
+
+    def new(self, op, args, kwargs):
+        return VexprWithMetadata(op, args, kwargs, self.metadata)
+
+    def update_args(self, args):
+        return VexprWithMetadata(self.op, args, self.kwargs, self.metadata)
+
+
+def with_metadata(expr: Vexpr, metadata: dict):
+    return VexprWithMetadata(*expr, metadata)
 
 
 ################################################################################
@@ -310,7 +332,7 @@ def partial_eval_(expr, context):
             impl = eval_impls[expr.op]
             return impl(*args, **expr.kwargs)
         else:
-            return Vexpr(expr.op, args, expr.kwargs)
+            return expr.new(expr.op, args, expr.kwargs)
 
 
 ################################################################################

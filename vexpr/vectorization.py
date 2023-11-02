@@ -19,30 +19,14 @@ from vexpr import Vexpr, core
 ################################################################################
 
 
-class VexprWithMetadata(Vexpr):
-    metadata: dict
-
-    def __new__(cls, op, args, kwargs, metadata):
-        self = super().__new__(cls, op, args, kwargs)
-        self.metadata = metadata
-        return self
-
-    def update_args(self, args):
-        return VexprWithMetadata(self.op, args, self.kwargs, self.metadata)
-
-
-def with_metadata(expr: Vexpr, metadata: dict):
-    return VexprWithMetadata(*expr, metadata)
-
-
 def with_return_shape(expr: Vexpr, return_shape: tuple):
-    return with_metadata(expr, dict(return_shape=return_shape))
+    return core.with_metadata(expr, dict(return_shape=return_shape))
 
 
 shape_impls = {
     int: lambda _: (),
     float: lambda _: (),
-    VexprWithMetadata: lambda expr: expr.metadata["return_shape"],
+    core.VexprWithMetadata: lambda expr: expr.metadata["return_shape"],
 }
 
 
@@ -90,7 +74,7 @@ def traced_call(expr, context):
         impl = core.eval_impls[expr.op]
         result = impl(*evaluated_args, **expr.kwargs)
 
-    expr = with_metadata(expr, dict(return_shape=shape(result)))
+    expr = core.with_metadata(expr, dict(return_shape=shape(result)))
 
     return expr, result
 
