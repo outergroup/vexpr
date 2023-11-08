@@ -27,6 +27,7 @@ from vexpr.torch.utils import (
     push_stack_through_reduction,
     shuffle_and_multi_reduce,
     stack_detect_shape,
+    verbose_logging,
 )
 
 
@@ -37,7 +38,8 @@ def shuffle_pushthrough(expr, transform=identity):
     op = expr.args[0].op
     impl = cimpls.push_shuffle_through_op.get(op, None)
     if impl is None:
-        print("No shuffle pushthrough support for", op)
+        if verbose_logging():
+            print("No shuffle pushthrough support for", op)
         raise v.CannotVectorize
     return impl(expr, transform)
 
@@ -46,7 +48,8 @@ def mul_along_dim_pushthrough(expr, transform=identity):
     op = expr.args[1].op
     impl = cimpls.push_mul_along_dim_through_op.get(op, None)
     if impl is None:
-        print("No mul_along_dim pushthrough support for", op)
+        if verbose_logging():
+            print("No mul_along_dim pushthrough support for", op)
         raise v.CannotVectorize
     return impl(expr, transform)
 
@@ -464,7 +467,8 @@ def push_concat_through_heads_tails(expr, transform=identity, allow_partial=True
     if not all(isinstance(child_expr, vp.Vexpr)
                and child_expr.op == cp.heads_tails_p
                for child_expr in expr.args[0]):
-        print("Warning: giving up on pushing concat through heads_tails")
+        if verbose_logging():
+            print("Warning: giving up on pushing concat through heads_tails")
         return expr
 
     if len(expr.args[0]) == 1:

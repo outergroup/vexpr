@@ -27,8 +27,8 @@ from vexpr.torch.utils import (
     cat_remainder_then_combine,
     push_stack_through_reduction,
     stack_detect_shape,
+    verbose_logging,
 )
-
 
 
 PRIORITIZED_OPS = set([
@@ -72,7 +72,8 @@ def stack_pushthrough(expr, transform=identity):
 def push_stack_through_op(expr, op, transform=identity, allow_partial=True):
     impl = impls.push_stack_through_op.get(op, None)
     if impl is None:
-        print("No stack pushthrough support for", op)
+        if verbose_logging():
+            print("No stack pushthrough support for", op)
         raise v.CannotVectorize
     else:
         return impl(expr, transform, allow_partial)
@@ -107,7 +108,8 @@ def cat_pushthrough(expr, transform=identity):
 def push_cat_through_op(expr, op, transform=identity, allow_partial=True):
     impl = impls.push_cat_through_op.get(op, None)
     if impl is None:
-        print("No cat pushthrough support for", op)
+        if verbose_logging():
+            print("No cat pushthrough support for", op)
         raise v.CannotVectorize
     else:
         return impl(expr, transform, allow_partial)
@@ -117,7 +119,8 @@ def moveaxis_pushthrough(expr, transform=identity):
     op = expr.args[0].op
     impl = impls.push_moveaxis_through_op.get(op, None)
     if impl is None:
-        print("No moveaxis pushthrough support for", op)
+        if verbose_logging():
+            print("No moveaxis pushthrough support for", op)
         return expr
     else:
         return impl(expr, transform)

@@ -1,4 +1,5 @@
 import collections
+import os
 
 import torch
 
@@ -7,6 +8,10 @@ import vexpr.torch as vtorch
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
 from vexpr.custom.torch.utils import maybe_shuffle
+
+
+def verbose_logging():
+    return os.environ.get("VEXPR_VERBOSE", "0") == "1"
 
 
 def identity(x): return x

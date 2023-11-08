@@ -1,3 +1,4 @@
+import os
 from functools import partial
 
 import vexpr as vp
@@ -79,13 +80,18 @@ def traced_call(expr, context):
     return expr, result
 
 
+def verbose_logging():
+    return os.environ.get("VEXPR_VERBOSE", "0") == "1"
+
+
 # {(op, child_op): f(expr)}
 lift_impls = {}
 
 def lift(expr, child_op):
     impl = lift_impls.get((expr.op, child_op), None)
     if impl is None:
-        print("No lift support for", expr.op, child_op)
+        if verbose_logging():
+            print("No lift support for", expr.op, child_op)
         raise CannotVectorize()
 
     return impl(expr)
