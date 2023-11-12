@@ -6,4 +6,7 @@ setup(name="vexpr",
       author="Marcus Lewis",
       url="https://vexpr.org/",
       packages=find_packages(),
+      package_data={'vexpr': ['vexpr/package_data/*',]},
+      include_package_data=True,
+      zip_safe=False,
 )
