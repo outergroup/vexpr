@@ -76,7 +76,9 @@ class VexprWithMetadata(Vexpr):
 
 
 def with_metadata(expr: Vexpr, metadata: dict):
-    return VexprWithMetadata(*expr, metadata)
+    if isinstance(expr, VexprWithMetadata):
+        metadata = {**expr.metadata, **metadata}
+    return VexprWithMetadata(expr.op, expr.args, expr.kwargs, metadata)
 
 
 ################################################################################
@@ -188,6 +190,18 @@ constant = lambda value: Vexpr(constant_p, (value,), {})
 
 repr_impls = {}
 
+
+def print_comments(repr_fn):
+    def repr_fn_with_comments(expr):
+        repr_txt = repr_fn(expr)
+        if isinstance(expr, VexprWithMetadata) \
+           and "comment" in expr.metadata:
+            repr_txt = f"\n# {expr.metadata['comment']}\n{repr_txt}"
+        return repr_txt
+    return repr_fn_with_comments
+
+
+@print_comments
 def default_vexpr_repr(expr):
     if expr.op in repr_impls:
         return repr_impls
@@ -246,27 +260,32 @@ def default_vexpr_repr(expr):
     return main_str
 
 
-def infix_repr(separator, expr):
-    left = pformat(expr.args[0])
-    right = pformat(expr.args[1])
+def infix_repr(separator):
+    @print_comments
+    def infix_repr_impl(expr):
+        left = pformat(expr.args[0])
+        right = pformat(expr.args[1])
 
-    left_lines = left.split("\n")
-    if len(left_lines) == 1:
-        return f"{left} {separator} {right}"
-    else:
-        return f"{left}\n{separator} {right}"
+        left_lines = left.split("\n")
+        if len(left_lines) == 1:
+            return f"{left} {separator} {right}"
+        else:
+            return f"{left}\n{separator} {right}"
+    return infix_repr_impl
 
 
 repr_impls.update({
     "default": default_vexpr_repr,
     symbol_p: lambda expr: expr.args[0],
-    operator_add_p: partial(infix_repr, "+"),
-    operator_mul_p: partial(infix_repr, "*"),
-    operator_truediv_p: partial(infix_repr, "/"),
-    operator_pow_p: partial(infix_repr, "**"),
-    operator_matmul_p: partial(infix_repr, "@"),
-    operator_neg_p: lambda expr: f"-{pformat(expr.args[0])}",
-    operator_getitem_p: lambda expr: f"{pformat(expr.args[0])}[{pformat(expr.args[1])}]",
+    operator_add_p: infix_repr("+"),
+    operator_mul_p: infix_repr("*"),
+    operator_truediv_p: infix_repr("/"),
+    operator_pow_p: infix_repr("**"),
+    operator_matmul_p: infix_repr("@"),
+    operator_neg_p: print_comments(lambda expr: f"-{pformat(expr.args[0])}"),
+    operator_getitem_p: print_comments(
+        lambda expr: f"{pformat(expr.args[0])}[{pformat(expr.args[1])}]"
+    ),
 })
 
 
