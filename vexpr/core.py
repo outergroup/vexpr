@@ -180,8 +180,8 @@ operator_matmul_p, operator_matmul = _p_and_constructor("operator.matmul")
 operator_neg_p, operator_neg = _p_and_constructor("operator.neg")
 operator_getitem_p, operator_getitem = _p_and_constructor("operator.getitem")
 
-constant_p = Primitive("constant")
-constant = lambda value: Vexpr(constant_p, (value,), {})
+value_p = Primitive("value")
+value = lambda v: Vexpr(value_p, (v,), {})
 
 
 ################################################################################
@@ -297,6 +297,7 @@ import operator
 
 
 eval_impls.update({
+    value_p: lambda v: v,
     operator_add_p: operator.add,
     operator_mul_p: operator.mul,
     operator_truediv_p: operator.truediv,
@@ -314,32 +315,35 @@ eval_impls.update({
 # Vexprs partial evaluation
 ################################################################################
 
-
 # this is essentially an alternate interpreter which only evaluates an operator
 # if its children can be evaluated, given the provided inputs.
-def partial_eval_(expr, context):
+def partial_eval_(expr, context, after_eval=None, to_eval_ready=None):
     if not isinstance(expr, Vexpr):
         raise ValueError(expr)
+
+    recurse = partial(partial_eval_, after_eval=after_eval,
+                      to_eval_ready=to_eval_ready)
 
     if expr.op == symbol_p:
         name = expr.args[0]
         if name in context:
-            return context[expr.args[0]]
+            ret = context[expr.args[0]]
         else:
-            return expr
+            ret = expr
     elif expr.op == let_p:
         context2 = dict(context)
         for symbol, v in expr.args[0]:
             name = (symbol if isinstance(symbol, str) else symbol.args[0])
-            v = partial_eval_(v, context2)
+            v = recurse(v, context2)
             if not isinstance(v, Vexpr):
                 context2[name] = v
-        return partial_eval_(expr.args[1], context2)
+        ret = recurse(expr.args[1], context2)
     else :
-        args = evaluate_args(expr.args, context, partial_eval_)
+        args = evaluate_args(expr.args, context, recurse)
+        e_args = to_eval_ready(args) if to_eval_ready is not None else args
 
         ready = True
-        for arg in args:
+        for arg in e_args:
             if isinstance(arg, Vexpr):
                 ready = False
             elif isinstance(arg, (list, tuple)):
@@ -349,9 +353,23 @@ def partial_eval_(expr, context):
 
         if ready and expr.op in eval_impls:
             impl = eval_impls[expr.op]
-            return impl(*args, **expr.kwargs)
+            ret = impl(*e_args, **expr.kwargs)
         else:
-            return expr.new(expr.op, args, expr.kwargs)
+            ret = expr.new(expr.op, args, expr.kwargs)
+
+    if after_eval is not None and not isinstance(ret, Vexpr):
+        ret = after_eval(expr, ret)
+
+    return ret
+
+
+
+# Wrap each value in a "value" Vexpr so that its metadata is preserved.
+partial_eval_with_metadata = partial(
+    partial_eval_,
+    after_eval=lambda expr, ret: expr.new(value_p, (ret,), {}),
+    to_eval_ready=partial(evaluate_args, context={}, call_fn=partial_eval_)
+)
 
 
 ################################################################################
@@ -405,7 +423,7 @@ def partial_eval(f, inputs):
     """
     if isinstance(f, VexprCaller):
         f = f.clone()
-        f.vexpr = partial_eval_(f.vexpr, inputs)
+        f.vexpr = partial_eval_with_metadata(f.vexpr, inputs)
         for name in inputs.keys():
             # Mimic behavior of functools.partial. Any arg after the first kwarg
             # can now only be specified as a kwarg.
@@ -416,6 +434,6 @@ def partial_eval(f, inputs):
                 pass
         return f
     elif isinstance(f, Vexpr):
-        return partial_eval_(f, inputs)
+        return partial_eval_with_metadata(f, inputs)
     else:
         raise ValueError(f)

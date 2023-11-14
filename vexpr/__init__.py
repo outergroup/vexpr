@@ -14,3 +14,4 @@ from .transformations import bottom_up_transform, transform_leafs
 from .to_python import to_python
 from .vectorization import vectorize
 from . import primitives
+from . import visual

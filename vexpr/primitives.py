@@ -9,5 +9,5 @@ from vexpr.core import (
     operator_matmul_p,
     operator_neg_p,
     operator_getitem_p,
-    constant_p,
+    value_p,
 )

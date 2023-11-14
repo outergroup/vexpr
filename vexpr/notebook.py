@@ -1,8 +1,9 @@
 import os
 import uuid
-
 from pkg_resources import resource_string
 
+import vexpr as vp
+import vexpr.core as core
 from IPython.display import HTML, display, update_display
 
 
@@ -193,3 +194,34 @@ def update_timeline(element_id, csv_txt):
     # Reuse element ID as display ID, because it's convenient.
     update_display(HTML("<script>" + js_refresh(element_id, csv_txt) + "</script>"),
                    display_id=element_id)
+
+
+def alias_values(expr):
+    aliases = []
+    values = []
+
+    def alias_if_value(expr):
+         if expr.op == vp.primitives.value_p:
+             alias = None
+             if isinstance(expr, core.VexprWithMetadata) \
+                and "visual_type" in expr.metadata:
+
+                 vtype = expr.metadata["visual_type"]
+                 if vtype == "mixing_weight":
+                     alias = f"$W{len(aliases)}"
+                 elif vtype == "location":
+                     alias = f"$L{len(aliases)}"
+                 elif vtype == "scale":
+                     alias = f"$S{len(aliases)}"
+
+             if alias is None:
+                 alias = f"$U{len(aliases)}"
+             aliases.append(alias)
+             values.append(str(expr.args[0].item()))
+             return vp.symbol(alias)
+         else:
+             return expr
+
+    aliased_expr = vp.bottom_up_transform(alias_if_value, expr)
+
+    return aliased_expr, aliases, values

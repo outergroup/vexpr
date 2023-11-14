@@ -16,7 +16,7 @@ class TestNumpyOperatorTests(unittest.TestCase):
     def test_multiply_with_np_array(self):
         import vexpr.core as c
         w = vp.symbol("w")
-        x = c.constant(np.array([[1.0, 2.0]]))
+        x = c.value(np.array([[1.0, 2.0]]))
         self._assert_vexprs_equal(w * x, c.operator_mul(w, x))
         self._assert_vexprs_equal(x * w, c.operator_mul(x, w))
 

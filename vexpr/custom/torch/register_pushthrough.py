@@ -12,6 +12,7 @@ import vexpr.torch as vtorch
 import vexpr.torch.impls as impls
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
+import vexpr.visual
 from vexpr.custom.torch.utils import (
     maybe_index_select,
     maybe_shuffle,
@@ -929,3 +930,16 @@ v.phase_ops[2] += [
 v.additional_transforms += [
     partial(vp.bottom_up_transform, merge_sum_multi_shuffle_sum_multi),
 ]
+
+
+def shuffle_type(expr):
+    source = expr.args[0]
+    if isinstance(source, vp.VexprWithMetadata):
+        return source.metadata.get("visual_type", None)
+    return None
+
+
+vexpr.visual.type_impls.update({
+    cp.shuffle_p: shuffle_type,
+    cp.heads_tails_p: lambda expr: "mixing_weight",
+})

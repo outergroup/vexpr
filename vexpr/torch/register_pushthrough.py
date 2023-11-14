@@ -12,6 +12,7 @@ import vexpr.torch as vtorch
 import vexpr.torch.impls as impls
 import vexpr.torch.primitives as p
 import vexpr.vectorization as v
+import vexpr.visual
 from vexpr.custom.torch.utils import (
     maybe_index_select,
     maybe_shuffle,
@@ -1045,3 +1046,16 @@ v.phase_ops[1] += [
     (p.moveaxis_p, moveaxis_pushthrough),
     (p.index_select_p, index_select_pushthrough),
 ]
+
+
+
+def index_select_type(expr):
+    source = expr.args[0]
+    if isinstance(source, core.VexprWithMetadata):
+        return source.metadata.get("visual_type", None)
+    return None
+
+
+vexpr.visual.type_impls.update({
+    p.index_select_p: index_select_type,
+})
