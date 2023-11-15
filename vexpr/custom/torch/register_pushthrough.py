@@ -4,6 +4,7 @@ from functools import partial
 import torch
 
 import vexpr as vp
+import vexpr.core as core
 import vexpr.custom.torch as vctorch
 import vexpr.custom.torch.impls as cimpls
 import vexpr.custom.torch.primitives as cp
@@ -934,7 +935,7 @@ v.additional_transforms += [
 
 def shuffle_type(expr):
     source = expr.args[0]
-    if isinstance(source, vp.VexprWithMetadata):
+    if isinstance(source, core.VexprWithMetadata):
         return source.metadata.get("visual_type", None)
     return None
 
@@ -942,4 +943,37 @@ def shuffle_type(expr):
 vexpr.visual.type_impls.update({
     cp.shuffle_p: shuffle_type,
     cp.heads_tails_p: lambda expr: "mixing_weight",
+})
+
+
+prev_sum_p_optimize = vexpr.visual.optimize_impls.get(p.sum_p, None)
+def sum_visual_optimize(expr):
+    """
+    Convert weighted sums so that each weight is next to its corresponding
+    value.
+    """
+    if isinstance(expr.args[0], vp.Vexpr) \
+       and expr.args[0].op == cp.mul_along_dim_p:
+        w, t = expr.args[0].args
+        mul_kwargs = expr.args[0].kwargs
+        if isinstance(t, vp.Vexpr) and t.op == vtorch.primitives.stack_p:
+            # zip w with the stack, moving comments up to above the multiplication
+            new_arg0 = [
+                sum_operand.new(cp.mul_along_dim_p,
+                            (w[..., i],
+                             vp.Vexpr(sum_operand.op,
+                                      sum_operand.args,
+                                      sum_operand.kwargs)),
+                            mul_kwargs)
+                for i, sum_operand in enumerate(t.args[0])]
+            expr = expr.update_args((new_arg0,))
+
+    if prev_sum_p_optimize is not None:
+        expr = prev_sum_p_optimize(expr)
+
+    return expr
+
+
+vexpr.visual.optimize_impls.update({
+    p.sum_p: sum_visual_optimize,
 })

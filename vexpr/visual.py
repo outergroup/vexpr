@@ -35,10 +35,8 @@ def propagate_type_info_(expr):
     return visual_type(expr, t)
 
 
-def optimize(expr):
-    expr = bottom_up_transform(optimize_, expr)
-    expr = bottom_up_transform(propagate_type_info_, expr)
-    return expr
+optimize = partial(bottom_up_transform, optimize_)
+propagate_types = partial(bottom_up_transform, propagate_type_info_)
 
 
 def getitem_type(expr):
