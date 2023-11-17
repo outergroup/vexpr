@@ -33,8 +33,13 @@ function hiddenTimeState() {
           renderTime(1, timesteps.length, selectedTimestep);
 
           timeState.node()._vexprState.selectTimestep = function(timestep) {
-            timeState.node()._vexprState.userSelectedTimestep = timestep;
-            renderTimestep(timesteps[Math.floor(timestep) - 1]);
+            const tDiscrete = Math.floor(timestep);
+            if (tDiscrete == timesteps.length) {
+              timeState.node()._vexprState.userSelectedTimestep = null;
+            } else {
+              timeState.node()._vexprState.userSelectedTimestep = tDiscrete;
+            }
+            renderTimestep(timesteps[tDiscrete - 1]);
             renderTime(1, timesteps.length, timestep);
           }
         });
