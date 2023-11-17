@@ -3,7 +3,6 @@ import { play_button_svg, pause_button_svg, restart_button_svg } from "./buttons
 
 
 const anim_t = 50;
-const param_color = "black";
 
 function hiddenTimeState() {
   let renderTimestep,
@@ -85,11 +84,11 @@ function scalarView() {
               svg.append('rect')
                 .attr('y', padding)
                 .attr('height', height - padding*2)
-                .style('fill', param_color);
+                .style('fill', "currentColor");
 
               svg.append('text')
                 .attr('y', height * tfrac)
-                .attr('fill', param_color)
+                .attr('fill', "currentColor")
                 .style("font-size", fontSize);
 
               return svg;
@@ -220,12 +219,12 @@ function positionView() {
               position.append("line")
                 .attr('y1', 16)
                 .attr('y2', 34)
-                .style('stroke', param_color)
+                .style('stroke', 'currentColor')
                 .style('stroke-width', 6);
               position.append("text")
                 .attr("class", "position-label")
                 .attr('y', 10)
-                .attr('fill', param_color)
+                .attr('fill', 'currentColor')
                 .style("text-anchor", 'middle')
                 .style("font-size", "13px");
             });
@@ -283,14 +282,14 @@ function mixingWeightView() {
               .attr("width", 100)
               .attr("height", 6)
               .attr("fill", "transparent")
-              .attr("stroke", "black");
+              .attr("stroke", "currentColor");
 
             g.append("rect")
               .attr("class", "value")
               .attr("x", 0)
               .attr("y", 3)
               .attr("height", 6)
-              .attr("fill", param_color);
+              .attr("fill", 'currentColor');
 
             g.append("title");
 
@@ -471,27 +470,24 @@ function timeControl() {
                 }
               }
 
-              let play_button = slider_container_container.append("img")
+              let play_button = slider_container_container.append("span")
                   .style("display", "none")
                   .style("margin-left", "10px")
                   .style("margin-top", "-10px")
                   .on("click", play)
-                  .attr("width", 13)
-                  .attr("src", "data:image/svg+xml;base64," + btoa(play_button_svg)),
-                  pause_button = slider_container_container.append("img")
+                  .html(play_button_svg),
+                  pause_button = slider_container_container.append("span")
                   .style("display", "none")
                   .style("margin-left", "8px")
                   .style("margin-top", "-10px")
                   .on("click", pause)
-                  .attr("width", 15)
-                  .attr("src", "data:image/svg+xml;base64," + btoa(pause_button_svg)),
-                  restart_button = slider_container_container.append("img")
+                  .html(pause_button_svg),
+                  restart_button = slider_container_container.append("span")
                   .style("display", "inline")
                   .style("margin-left", "8px")
                   .style("margin-top", "-10px")
                   .on("click", restart)
-                  .attr("width", 15)
-                  .attr("src", "data:image/svg+xml;base64," + btoa(restart_button_svg));
+                  .html(restart_button_svg);
 
               slider_
                 .on("input", () => {
@@ -566,18 +562,18 @@ function expressionView(expr, keys) {
     keys.forEach(key => {
       if (key.startsWith("$W")) {
         exprHTML = exprHTML.replace(
-          key, `<span class="weight-value" style="color:blue;" data-key="${key}"></span>`);
+          key, `<span class="weight-value" data-key="${key}"></span>`);
       } else if (key.startsWith("$S")) {
         exprHTML = exprHTML.replace(
-          key, `<span class="scale-value" style="color:red;" data-key="${key}"></span>`);
+          key, `<span class="scale-value" data-key="${key}"></span>`);
       } else if (key.startsWith("$LS")) {
         exprHTML = exprHTML.replace(
-          key, `<span class="lengthscale-value" style="color:red;" data-key="${key}"></span>`);
+          key, `<span class="lengthscale-value" data-key="${key}"></span>`);
       } else {
         exprHTML = exprHTML.replace(
-          key, `<span class="parameter-value" style="color:blue;" data-key="${key}"></span>`);
+          key, `<span class="parameter-value" data-key="${key}"></span>`);
       }
-    })
+    });
 
     exprHTML = `<span style='color:gray;'>${exprHTML}</span>`;
     return exprHTML;
