@@ -567,20 +567,29 @@ function expressionView(expr, keys) {
     keys.forEach(key => {
       if (key.startsWith("$W")) {
         exprHTML = exprHTML.replace(
-          key, `<span class="weight-value" data-key="${key}"></span>`);
+          key, `<span class="mixing-weight-value" data-key="${key}"></span>`);
       } else if (key.startsWith("$S")) {
         exprHTML = exprHTML.replace(
           key, `<span class="scale-value" data-key="${key}"></span>`);
-      } else if (key.startsWith("$LS")) {
-        exprHTML = exprHTML.replace(
-          key, `<span class="lengthscale-value" data-key="${key}"></span>`);
       } else {
         exprHTML = exprHTML.replace(
           key, `<span class="parameter-value" data-key="${key}"></span>`);
       }
     });
 
-    exprHTML = `<span style='color:gray;'>${exprHTML}</span>`;
+    // Find all text that hasn't yet been wrapped in spans. This gives us the
+    // ability to style this text without affecting the style of the other
+    // spans, enabling them to inherit dark mode colors.
+    const parsed = (new DOMParser()).parseFromString(exprHTML, 'text/html');
+    exprHTML = "";
+    parsed.body.childNodes.forEach(node => {
+      if (node.nodeType == Node.TEXT_NODE) {
+        exprHTML += `<span class="vexpr-code">${node.textContent}</span>`;
+      } else {
+        exprHTML += node.outerHTML;
+      }
+    });
+
     return exprHTML;
   })();
 
