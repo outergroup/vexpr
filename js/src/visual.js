@@ -612,17 +612,7 @@ function expressionView(expr, keys) {
                 .width(200)
                 .fontSize(10));
       });
-      expression.selectAll("span.lengthscale-value").each(function(_) {
-        let lengthscaleValue = d3.select(this);
-        let k = lengthscaleValue.attr("data-key");
-        lengthscaleValue.datum(model[k])
-          .call(scalarView()
-                .scale(d3.scaleLinear().domain([0, 3.9]).range([0, 200]))
-                .height(12)
-                .width(200)
-                .fontSize(9));
-      });
-      expression.selectAll("span.weight-value").each(function(_) {
+      expression.selectAll("span.mixing-weight-value").each(function(_) {
         let weightValue = d3.select(this);
         let k = weightValue.attr("data-key");
         weightValue.datum(model[k])
