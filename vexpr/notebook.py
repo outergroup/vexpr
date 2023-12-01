@@ -41,7 +41,7 @@ def js_refresh(element_id, encoded_data):
     """
 
 
-def visualize_timeline(html_preamble, components, headers, encoded_data):
+def visualize_timeline(html_preamble, encoded_to_timesteps, components, encoded_data):
     element_id = str(uuid.uuid1())
     components_str = "\n".join(components)
 
@@ -59,20 +59,10 @@ def visualize_timeline(html_preamble, components, headers, encoded_data):
             renderTimeFunctions.forEach(render => render(min, max, curr))
           }});
 
-      const headers = {repr(headers)};
-
       const container = document.getElementById("{element_id}");
       container._vexprState = {{
-        refresh: function(rows) {{
-           const timesteps = rows
-             .replace(/\\n$/, '') // strip any newline at the end of the string
-             .split('\\n').map(
-                row => new Float32Array(Uint8Array.from(atob(row), c => c.charCodeAt(0)).buffer)
-              ).map(
-                row => Object.fromEntries(
-                  headers.map((header, i) => [header, row[i]])
-              ));
-
+        refresh: function(encodedData) {{
+          {encoded_to_timesteps}
           d3.select(container).datum(timesteps).call(timeStateComponent);
         }}
       }};

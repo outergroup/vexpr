@@ -55,14 +55,32 @@ def time_control(class_name):
     """
 
 
-
-
 def position_view(class_name, key):
     return f"""
       (function() {{
         const element = container.querySelectorAll(".{class_name}")[0],
               component = vexpr.positionView()
               .scale(d3.scaleLinear().domain([-1.3, 0.3]).range([0, 400]));
+
+        renderTimestepFunctions.push(function (model) {{
+          d3.select(element).datum(model["{key}"]).call(component);
+        }});
+      }})();
+    """
+
+
+def position_distribution_view(class_name, key):
+    return f"""
+      (function() {{
+        const element = container.querySelectorAll(".{class_name}")[0],
+              component = vexpr.scalarDistributionView()
+              .scale(d3.scaleLinear().domain([-1.5, 1.5]).range([0, 400]))
+              .fixedMin(-1.5)
+              .fixedMax(1.5)
+              .padRight(8)
+              .height(12)
+              .fontSize(13)
+              .tfrac(2.7/3);
 
         renderTimestepFunctions.push(function (model) {{
           d3.select(element).datum(model["{key}"]).call(component);
@@ -85,6 +103,22 @@ def expression_view(class_name, keys, text):
       }})();
     """
 
+
+def expression_distribution_view(class_name, keys, text):
+    return f"""
+      (function() {{
+        const kernelExpr = `{text}`,
+              element = container.querySelectorAll(".{class_name}")[0],
+              kernelKeys = {repr(keys)},
+              component = vexpr.expressionView(kernelExpr, kernelKeys).valueType("scalarDistribution");
+
+        renderTimestepFunctions.push(function (model) {{
+          d3.select(element).datum(model).call(component);
+        }});
+      }})();
+    """
+
+
 def scalar_view(class_name, key):
     return f"""
       (function() {{
@@ -95,7 +129,6 @@ def scalar_view(class_name, key):
               .exponentFormat(true)
               .padRight(55)
               .height(12)
-              .width(200)
               .fontSize(13)
               .tfrac(2.7/3);
 
@@ -106,7 +139,65 @@ def scalar_view(class_name, key):
     """
 
 
-def visualize_timeline_html(html_preamble, components, headers, encoded_data):
+def scalar_distribution_view(class_name, key):
+    return f"""
+      (function() {{
+        const element = container.querySelectorAll(".{class_name}")[0],
+              component = vexpr.scalarDistributionView()
+              .scale(d3.scaleLog().domain([1e-7, 5e0]).range([0, 400]))
+              .fixedMin(1e-7)
+              .exponentFormat(true)
+              .padRight(8)
+              .height(12)
+              .fontSize(13)
+              .tfrac(2.7/3);
+
+        renderTimestepFunctions.push(function (model) {{
+          d3.select(element).datum(model["{key}"]).call(component);
+        }});
+      }})();
+    """
+
+
+def scalar_timesteps_js(headers):
+    return f"""
+      const headers = {repr(headers)};
+      const timesteps = encodedData
+       .replace(/\\n$/, '') // strip any newline at the end of the string
+       .split('\\n')
+       .map(
+          row => new Float32Array(Uint8Array.from(atob(row), c => c.charCodeAt(0)).buffer)
+        ).map(
+          row => Object.fromEntries(
+            headers.map((header, i) => [header, row[i]])
+        ));
+    """
+
+
+def scalar_distribution_timesteps_js(headers, num_values_per_param):
+    return f"""
+      const numValuesPerParam = {num_values_per_param};
+      const headers = {repr(headers)};
+      const timesteps = encodedData
+       .replace(/\\n$/, '') // strip any newline at the end of the string
+       .split('\\n')
+       .map(
+         row => new Float32Array(Uint8Array.from(atob(row), c => c.charCodeAt(0)).buffer))
+       .map(
+           row => {{
+             // Split row into numValuesPerParam chunks
+              const chunks = [];
+              for (let i = 0; i < row.length; i += numValuesPerParam) {{
+                chunks.push(row.slice(i, i + numValuesPerParam));
+              }}
+
+             return Object.fromEntries(
+               headers.map((header, i) => [header, chunks[i]]));
+          }});
+    """
+
+
+def visualize_timeline_html(html_preamble, encoded_to_timesteps, components, encoded_data):
     element_id = str(uuid.uuid1())
     components_str = "\n".join(components)
 
@@ -128,15 +219,8 @@ def visualize_timeline_html(html_preamble, components, headers, encoded_data):
 
       {components_str}
 
-      const headers = {repr(headers)};
-      const timesteps = `{encoded_data}`
-       .replace(/\\n$/, '') // strip any newline at the end of the string
-       .split('\\n').map(
-           row => new Float32Array(Uint8Array.from(atob(row), c => c.charCodeAt(0)).buffer)
-         ).map(
-           row => Object.fromEntries(
-             headers.map((header, i) => [header, row[i]])
-         ));
+      const encodedData = `{encoded_data}`;
+      {encoded_to_timesteps}
 
       d3.select(container).datum(timesteps).call(timeStateComponent);
     }})();
@@ -154,8 +238,6 @@ def full_html(body):
     {body}
     </body>
     </html>"""
-
-
 
 
 def alias_values(expr):
@@ -179,7 +261,7 @@ def alias_values(expr):
              if alias is None:
                  alias = f"$U{len(aliases)}"
              aliases.append(alias)
-             values.append(str(expr.args[0].item()))
+             values.append(expr.args[0].tolist())
              return vp.symbol(alias)
          else:
              return expr

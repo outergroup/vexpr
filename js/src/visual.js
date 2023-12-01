@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { play_button_svg, pause_button_svg, restart_button_svg } from "./buttons";
 
 
-const anim_t = 50;
+const anim_t = 100;
 
 function hiddenTimeState() {
   let renderTimestep,
@@ -66,7 +66,6 @@ function scalarView() {
       eps = 0,
       exponentFormat = false,
       height = 30,
-      width = 400,
       fontSize = "13px",
       padRight = 30,
       tfrac = 22.5/30;
@@ -145,9 +144,200 @@ function scalarView() {
     return render;
   };
 
-  render.width = function(value) {
-    if (!arguments.length) return width;
-    width = value;
+  render.height = function(value) {
+    if (!arguments.length) return height;
+    height = value;
+    return render;
+  };
+
+  render.fontSize = function(value) {
+    if (!arguments.length) return fontSize;
+    fontSize = value;
+    return render;
+  };
+
+  render.padRight = function(value) {
+    if (!arguments.length) return padRight;
+    padRight = value;
+    return render;
+  }
+
+  render.tfrac = function(value) {
+    if (!arguments.length) return tfrac;
+    tfrac = value;
+    return render;
+  }
+
+  return render;
+}
+
+function scalarDistributionView() {
+  let scale = d3.scaleLinear(),
+      eps = 0,
+      exponentFormat = false,
+      height = 30,
+      fontSize = "13px",
+      padRight = 8,
+      tfrac = 22.5/30,
+      fixedMin = 0,
+      fixedMax = null;
+
+  function render(selection) {
+    selection.each(function(points) {
+      const max = d3.max(points),
+            median = d3.median(points),
+            width = scale(max) - scale(fixedMin),
+            rectWidth = scale(median) - scale(fixedMin);
+
+      d3.select(this)
+        .selectAll(".visualization")
+        .data([points])
+        .join(enter => enter
+              .append("div")
+              .attr("class", "visualization")
+              .style("position", "relative")
+              .style("vertical-align", "middle")
+              .style("display", "inline-block")
+              .call(div => {
+
+                div.append('span')
+                  .style("font-size", fontSize)
+                  .style("color", "gray")
+                  .style("position", "relative")
+                  .style("top", "-2px")
+                  .text(fixedMin.toPrecision(2));
+
+
+                let svg = div.append("svg")
+                  .attr("class", "visualization-svg")
+                  .attr("height", height+2)
+                  .style("position", "relative")
+                  .style("left", "4px")
+                  // .style("top", "13px")
+                  .call(svg => {
+                    let g = svg.append("g")
+                        .attr("class", "content")
+                        .attr("transform", "translate(1,1)");
+
+                    let maxRect = g.append("rect")
+                      .attr("class", "max")
+                      .attr("height", height)
+                      .attr("fill", "silver");
+
+                    g.append("line")
+                      .attr("y1", 0)
+                      .attr("y2", height)
+                      .attr("stroke", "gray")
+                      .attr("stroke-width", 2);
+
+                    let maxLine = g.append("line")
+                        .attr("class", "max")
+                        .attr("y1", 0)
+                        .attr("y2", height)
+                        .attr("stroke", "gray")
+                        .attr("stroke-width", 2);
+
+                    if (fixedMax !== null) {
+                      const x = scale(fixedMax) - scale(fixedMin);
+                      maxRect.attr("width", x);
+                      maxLine.attr("x1", x).attr("x2", x);
+                    }
+
+                    return svg;
+                  });
+
+                let maxText = div.append('span')
+                    .attr('class', 'visualization-text')
+                    .style("font-size", fontSize)
+                    .style("color", "gray")
+                    .style("position", "relative")
+                    .style("top", "-2px")
+                    .style("left", "2px");
+
+                if (fixedMax != null) {
+                  maxText
+                    .text(exponentFormat
+                          ? fixedMax.toExponential(1)
+                          : fixedMax.toPrecision(2));
+
+                  const w = scale(fixedMax) - scale(fixedMin);
+                  svg.attr("width", w + padRight);
+                }
+
+                return div;
+              }))
+        .call(div => {
+          let svg = div.select(".visualization-svg"),
+              content = svg.select("g.content");
+
+          if (fixedMax == null) {
+            svg
+              .transition()
+              .duration(anim_t)
+              .ease(d3.easeLinear)
+              .attr("width", width + padRight);
+
+            content.select("rect.max")
+              .transition()
+              .duration(anim_t)
+              .ease(d3.easeLinear)
+              .attr('width', width);
+
+            content.select("line.max")
+              .transition()
+              .duration(anim_t)
+              .ease(d3.easeLinear)
+              .attr('x1', width)
+              .attr('x2', width);
+
+            div.select(".visualization-text")
+              .text(exponentFormat
+                    ? max.toExponential(1)
+                    : max.toPrecision(2));
+          }
+
+
+          content.selectAll(".point")
+            .data(d => d)
+            .join(enter => enter.append("circle")
+                  .attr("class", "point")
+                  .attr("r", 2.5)
+                  .attr("cy", height / 2)
+                  .attr('fill-opacity', 0.4)
+                  .attr("fill", "blue")
+                  .attr("stroke", "none")
+                  )
+            .transition()
+            .duration(anim_t)
+            .ease(d3.easeLinear)
+            .attr("cx", d => scale(d));
+
+          return div;
+        });
+    });
+  }
+
+  render.scale = function(value) {
+    if (!arguments.length) return scale;
+    scale = value;
+    return render;
+  };
+
+  render.fixedMin = function(value) {
+    if (!arguments.length) return fixedMin;
+    fixedMin = value;
+    return render;
+  };
+
+  render.fixedMax = function(value) {
+    if (!arguments.length) return fixedMax;
+    fixedMax = value;
+    return render;
+  };
+
+  render.exponentFormat = function(value) {
+    if (!arguments.length) return exponentFormat;
+    exponentFormat = value;
     return render;
   };
 
@@ -593,6 +783,8 @@ function expressionView(expr, keys) {
     return exprHTML;
   })();
 
+  let valueType = "scalar";
+
   function render(selection) {
     selection.each(function(model) {
       const expression = d3.select(this)
@@ -602,27 +794,56 @@ function expressionView(expr, keys) {
                   .attr("class", "expression")
                   .html(d => exprHTML));
 
+      let mixingWeightComponent, scaleComponent;
+      if (valueType == "scalar") {
+        scaleComponent = scalarView()
+          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+          .height(12)
+          .fontSize(10);
+        mixingWeightComponent = mixingWeightView();
+      } else if (valueType == "scalarDistribution") {
+        scaleComponent = scalarDistributionView()
+          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+          .height(10)
+          .fontSize(10);
+        mixingWeightComponent = scalarDistributionView()
+          .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
+          .fixedMax(1)
+          .height(10)
+          .fontSize(10);
+      }
+
       expression.selectAll("span.scale-value").each(function(_) {
         const scaleValue = d3.select(this),
               k = scaleValue.attr("data-key");
+
         scaleValue.datum(model[k])
-          .call(scalarView()
-                .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
-                .height(12)
-                .width(200)
-                .fontSize(10));
+          .call(scaleComponent);
       });
       expression.selectAll("span.mixing-weight-value").each(function(_) {
         let weightValue = d3.select(this);
         let k = weightValue.attr("data-key");
         weightValue.datum(model[k])
-          .call(mixingWeightView());
+          .call(mixingWeightComponent);
       });
     });
   }
+
+  render.valueType = function(_) {
+    if (!arguments.length) return valueType;
+    valueType = _;
+    return render;
+  };
 
   return render;
 }
 
 
-export { hiddenTimeState, scalarView, expressionView, positionView, timeControl };
+export {
+  expressionView,
+  hiddenTimeState,
+  positionView,
+  scalarDistributionView,
+  scalarView,
+  timeControl,
+};
