@@ -368,6 +368,219 @@ function scalarDistributionView() {
   return render;
 }
 
+function scalarDistributionListView() {
+  let scale = d3.scaleLinear(),
+      eps = 0,
+      exponentFormat = false,
+      height = 30,
+      fontSize = "13px",
+      padRight = 8,
+      tfrac = 22.5/30,
+      fixedMin = 0,
+      fixedMax = null,
+      rowHeight = 2,
+      pointRadius = 1;
+
+  function render(selection) {
+    selection.each(function(points_lists) {
+
+      const scale2 = d3.scaleLinear()
+            .domain([fixedMin == null ? d3.min(points_lists, points => d3.min(points)) : fixedMin,
+                     fixedMax == null ? d3.max(points_lists, points => d3.max(points)) : fixedMax])
+            .range(scale.range());
+
+      d3.select(this)
+        .selectAll(".visualizationContainer")
+        .data([points_lists])
+        .join(enter => enter.append("div")
+              .attr("class", "visualizationContainer")
+              .style("display", "inline-block")
+              .style("vertical-align", "middle")
+              .call(div => {
+                let minText = div.append('span')
+                  .attr('class', 'min-text')
+                  .style("font-size", fontSize)
+                  .style("color", "gray")
+                  .style("position", "relative")
+                  .style("top", points_lists => `-${points_lists.length * rowHeight / 2 - 5}px`);
+                div.append("svg")
+                  .style("position", "relative")
+                  .style("left", "4px")
+                  .append("g")
+                  .attr("class", "content")
+                  .attr("transform", "translate(1,1)")
+                  .call(g => {
+                    let maxRect = g.append("rect")
+                      .attr("fill", "silver");
+
+                    let minLine = g.append("line")
+                      .attr("class", "min")
+                      .attr("y1", 0)
+                      .attr("stroke", "gray")
+                      .attr("stroke-width", 2);
+
+                    let maxLine = g.append("line")
+                        .attr("class", "max")
+                        .attr("y1", 0)
+                        .attr("stroke", "gray")
+                        .attr("stroke-width", 2);
+
+                    if (fixedMin !== null) {
+                      const x = scale2(fixedMin);
+                      minLine.attr("x1", x).attr("x2", x);
+                    }
+
+                    if (fixedMax !== null) {
+                      const x = scale2(fixedMax) - scale2(fixedMin);
+                      maxRect.attr("width", x);
+                      maxLine.attr("x1", x).attr("x2", x);
+                    }
+                  });
+
+                let maxText = div.append('span')
+                    .attr('class', 'max-text')
+                    .style("font-size", fontSize)
+                    .style("color", "gray")
+                    .style("position", "relative")
+                    .style("top", points_lists => `-${points_lists.length * rowHeight / 2 - 5}px`)
+                    .style("left", "2px");
+
+                if (fixedMin != null) {
+                  minText
+                    .text(exponentFormat
+                          ? fixedMin.toExponential(1)
+                          : fixedMin.toPrecision(2));
+                }
+
+                if (fixedMax != null) {
+                  maxText
+                    .text(exponentFormat
+                          ? fixedMax.toExponential(1)
+                          : fixedMax.toPrecision(2));
+                }
+
+              }))
+        .call(div => {
+          let fmax = points_lists => d3.max(points_lists, points => d3.max(points)),
+              fmin = points_lists => d3.min(points_lists, points => d3.min(points)),
+              fwidth = points_lists => scale2(fmax(points_lists)),
+              fheight = points_lists => points_lists.length * rowHeight;
+
+          let svg = div.select("svg")
+              .attr("width", points_list => padRight + 2 + (scale2(fixedMax == null ? fmax(points_list) : fixedMax)
+                                                            - scale2(fixedMin == null ? fmin(points_list) : fixedMin)))
+              .attr("height", points_lists => fheight(points_lists) + 2);
+
+          let g = svg.select("g.content");
+
+          g.select("rect")
+            .attr("width", points_list => (scale2(fixedMax == null ? fmax(points_list) : fixedMax)
+                                           - scale2(fixedMin == null ? fmin(points_list) : fixedMin)))
+            .attr("height", fheight);
+
+          g.select("line.min")
+            .attr("y2", fheight);
+
+          g.select("line.max")
+            .attr("y2", fheight);
+
+          if (fixedMin == null) {
+            g.select("line.min")
+              .attr("x1", points_lists => scale2(fmin(points_lists)))
+              .attr("x2", points_lists => scale2(fmin(points_lists)));
+
+            div.select(".min-text")
+              .text(points_lists => exponentFormat
+                    ? fmin(points_lists).toExponential(1)
+                    : fmin(points_lists).toPrecision(2));
+          }
+
+
+          if (fixedMax == null) {
+            g.select("line.max")
+              .attr("x1", fwidth)
+              .attr("x2", fwidth);
+
+            div.select(".max-text")
+              .text(points_lists => exponentFormat
+                    ? fmax(points_lists).toExponential(1)
+                    : fmax(points_lists).toPrecision(2));
+          }
+
+          g.selectAll(".pointsList")
+            .data(d => d)
+            .join(enter => enter.append("g")
+                  .attr("class", "pointsList")
+                  .attr("transform", (_, i) => `translate(0,${i * rowHeight})`))
+            .selectAll(".point")
+            .data(d => d)
+            .join(enter => enter.append("circle")
+                  .attr("class", "point")
+                  .attr("cy", pointRadius)
+                  .attr("r", pointRadius)
+                  .attr('fill-opacity', 0.2)
+                  .attr("fill", "blue")
+                  .attr("stroke", "none"))
+            .transition()
+            .duration(anim_t)
+            .ease(d3.easeLinear)
+            .attr("cx", d => scale2(d));
+        });
+
+    });
+  }
+
+  render.scale = function(value) {
+    if (!arguments.length) return scale;
+    scale = value;
+    return render;
+  };
+
+  render.fixedMin = function(value) {
+    if (!arguments.length) return fixedMin;
+    fixedMin = value;
+    return render;
+  };
+
+  render.fixedMax = function(value) {
+    if (!arguments.length) return fixedMax;
+    fixedMax = value;
+    return render;
+  };
+
+  render.exponentFormat = function(value) {
+    if (!arguments.length) return exponentFormat;
+    exponentFormat = value;
+    return render;
+  };
+
+  render.height = function(value) {
+    if (!arguments.length) return height;
+    height = value;
+    return render;
+  };
+
+  render.fontSize = function(value) {
+    if (!arguments.length) return fontSize;
+    fontSize = value;
+    return render;
+  };
+
+  render.padRight = function(value) {
+    if (!arguments.length) return padRight;
+    padRight = value;
+    return render;
+  }
+
+  render.tfrac = function(value) {
+    if (!arguments.length) return tfrac;
+    tfrac = value;
+    return render;
+  }
+
+  return render;
+}
+
 function positionView() {
   let scale = d3.scaleLinear();
 
@@ -811,6 +1024,16 @@ function expressionView(expr, keys) {
           .fixedMax(1)
           .height(10)
           .fontSize(10);
+      } else if (valueType == "scalarDistributionList") {
+        scaleComponent = scalarDistributionListView()
+          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+          .height(10)
+          .fontSize(10);
+        mixingWeightComponent = scalarDistributionListView()
+          .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
+          .fixedMax(1)
+          .height(10)
+          .fontSize(10);
       }
 
       expression.selectAll("span.scale-value").each(function(_) {
@@ -843,6 +1066,7 @@ export {
   expressionView,
   hiddenTimeState,
   positionView,
+  scalarDistributionListView,
   scalarDistributionView,
   scalarView,
   timeControl,
