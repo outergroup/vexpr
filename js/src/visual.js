@@ -368,166 +368,163 @@ function scalarDistributionView() {
   return render;
 }
 
+function toPrecisionThrifty(d, precision) {
+  const fullPrecision = d.toPrecision(precision),
+        parsedPrecise = parseFloat(fullPrecision);
+
+  for (let i = 1; i < precision; i++) {
+    const candidate = d.toPrecision(i);
+    if (parseFloat(candidate) == parsedPrecise) {
+      return candidate;
+    }
+  }
+
+  return fullPrecision;
+}
+
 function scalarDistributionListView() {
   let scale = d3.scaleLinear(),
-      eps = 0,
+      pixelsPerUnit = 100,
       exponentFormat = false,
       height = 30,
       fontSize = "13px",
       padRight = 8,
       tfrac = 22.5/30,
-      fixedMin = 0,
-      fixedMax = null,
       rowHeight = 2,
-      pointRadius = 1;
+      pointRadius = 1,
+      useDataMin = false,
+      useDataMax = false;
 
   function render(selection) {
-    selection.each(function(points_lists) {
+    const fmin = useDataMin
+          ? pointsListsData => pointsListsData.min
+          : pointsListsData => scale.domain()[0],
+          fmax = useDataMax
+          ? pointsListsData => pointsListsData.max
+          : pointsListsData => scale.domain()[1],
+          fxmax = pointsListsData => scale(fmax(pointsListsData)),
+          fxmin = pointsListsData => scale(fmin(pointsListsData)),
+          fwidth = pointsListsData => fxmax(pointsListsData) - fxmin(pointsListsData),
+          fheight = pointsListsData => pointsListsData.pointsLists.length * rowHeight,
+          fmintext = pointsListsData => exponentFormat
+          ? fmin(pointsListsData).toExponential(1)
+          : toPrecisionThrifty(fmin(pointsListsData), 2),
+          fmaxtext = pointsListsData => exponentFormat
+          ? fmax(pointsListsData).toExponential(1)
+          : toPrecisionThrifty(fmax(pointsListsData), 2);
 
-      const scale2 = d3.scaleLinear()
-            .domain([fixedMin == null ? d3.min(points_lists, points => d3.min(points)) : fixedMin,
-                     fixedMax == null ? d3.max(points_lists, points => d3.max(points)) : fixedMax])
-            .range(scale.range());
+    selection.selectAll(".visualizationContainer")
+      .data(d => [d])
+      .join(enter => enter.append("div")
+            .attr("class", "visualizationContainer")
+            .style("display", "inline-block")
+            .style("vertical-align", "middle")
+            .style("border", "1px solid black")
+            .style("border-radius", "3px")
+            .style("padding-left", "5px")
+            .style("padding-right", "6px")
+            .style("margin-top", "1px")
+            .style("margin-bottom", "1px")
+            .call(div => {
+              div.append('span')
+                .attr('class', 'min-text')
+                .style("font-size", fontSize)
+                .style("color", "gray")
+                .style("position", "relative")
+                .style("top", d => `-${d.pointsLists.length * rowHeight / 2 - 5}px`)
+                .text(fmintext);
 
-      d3.select(this)
-        .selectAll(".visualizationContainer")
-        .data([points_lists])
-        .join(enter => enter.append("div")
-              .attr("class", "visualizationContainer")
-              .style("display", "inline-block")
-              .style("vertical-align", "middle")
-              .call(div => {
-                let minText = div.append('span')
-                  .attr('class', 'min-text')
-                  .style("font-size", fontSize)
-                  .style("color", "gray")
-                  .style("position", "relative")
-                  .style("top", points_lists => `-${points_lists.length * rowHeight / 2 - 5}px`);
-                div.append("svg")
-                  .style("position", "relative")
-                  .style("left", "4px")
-                  .append("g")
-                  .attr("class", "content")
-                  .attr("transform", "translate(1,1)")
-                  .call(g => {
-                    let maxRect = g.append("rect")
-                      .attr("fill", "silver");
+              div.append("svg")
+                .style("position", "relative")
+                .style("left", "4px")
+                .append("g")
+                .attr("class", "content")
+                .attr("transform", "translate(1,0)")
+                .call(g => {
+                  g.append("rect")
+                    .attr("fill", "silver")
+                    .attr("width", fwidth);
 
-                    let minLine = g.append("line")
-                      .attr("class", "min")
-                      .attr("y1", 0)
-                      .attr("stroke", "gray")
-                      .attr("stroke-width", 2);
+                  g.append("line")
+                    .attr("class", "min")
+                    .attr("y1", 0)
+                    .attr("stroke", "gray")
+                    .attr("stroke-width", 2)
+                    .attr("x1", fxmin)
+                    .attr("x2", fxmin);
 
-                    let maxLine = g.append("line")
-                        .attr("class", "max")
-                        .attr("y1", 0)
-                        .attr("stroke", "gray")
-                        .attr("stroke-width", 2);
+                  g.append("line")
+                    .attr("class", "max")
+                    .attr("y1", 0)
+                    .attr("stroke", "gray")
+                    .attr("stroke-width", 2)
+                    .attr("x1", fxmax)
+                    .attr("x2", fxmax);
+                });
 
-                    if (fixedMin !== null) {
-                      const x = scale2(fixedMin);
-                      minLine.attr("x1", x).attr("x2", x);
-                    }
+              div.append('span')
+                .attr('class', 'max-text')
+                .style("font-size", fontSize)
+                .style("color", "gray")
+                .style("position", "relative")
+                .style("top", pointsListsData =>
+                  `-${pointsListsData.pointsLists.length * rowHeight / 2 - 5}px`)
+                .style("left", "2px")
+                .text(fmaxtext);
+            }))
+      .call(div => {
+        div.style("height", pointsListsData => `${fheight(pointsListsData)}px`);
 
-                    if (fixedMax !== null) {
-                      const x = scale2(fixedMax) - scale2(fixedMin);
-                      maxRect.attr("width", x);
-                      maxLine.attr("x1", x).attr("x2", x);
-                    }
-                  });
+        let svg = div.select("svg")
+            .attr("width", d => fwidth(d) + padRight + 2)
+            .attr("height", d => fheight(d));
 
-                let maxText = div.append('span')
-                    .attr('class', 'max-text')
-                    .style("font-size", fontSize)
-                    .style("color", "gray")
-                    .style("position", "relative")
-                    .style("top", points_lists => `-${points_lists.length * rowHeight / 2 - 5}px`)
-                    .style("left", "2px");
+        let g = svg.select("g.content");
 
-                if (fixedMin != null) {
-                  minText
-                    .text(exponentFormat
-                          ? fixedMin.toExponential(1)
-                          : fixedMin.toPrecision(2));
-                }
+        g.select("rect")
+          .attr("width", fwidth)
+          .attr("height", fheight);
 
-                if (fixedMax != null) {
-                  maxText
-                    .text(exponentFormat
-                          ? fixedMax.toExponential(1)
-                          : fixedMax.toPrecision(2));
-                }
+        g.select("line.min")
+          .attr("y2", fheight);
 
-              }))
-        .call(div => {
-          let fmax = points_lists => d3.max(points_lists, points => d3.max(points)),
-              fmin = points_lists => d3.min(points_lists, points => d3.min(points)),
-              fwidth = points_lists => scale2(fmax(points_lists)),
-              fheight = points_lists => points_lists.length * rowHeight;
+        g.select("line.max")
+          .attr("y2", fheight);
 
-          let svg = div.select("svg")
-              .attr("width", points_list => padRight + 2 + (scale2(fixedMax == null ? fmax(points_list) : fixedMax)
-                                                            - scale2(fixedMin == null ? fmin(points_list) : fixedMin)))
-              .attr("height", points_lists => fheight(points_lists) + 2);
-
-          let g = svg.select("g.content");
-
-          g.select("rect")
-            .attr("width", points_list => (scale2(fixedMax == null ? fmax(points_list) : fixedMax)
-                                           - scale2(fixedMin == null ? fmin(points_list) : fixedMin)))
-            .attr("height", fheight);
-
+        if (useDataMin) {
           g.select("line.min")
-            .attr("y2", fheight);
+            .attr("x1", fxmin)
+            .attr("x2", fxmin);
 
+          div.select(".min-text")
+            .text(fmintext);
+        }
+
+        if (useDataMax) {
           g.select("line.max")
-            .attr("y2", fheight);
+            .attr("x1", fxmax)
+            .attr("x2", fxmax);
 
-          if (fixedMin == null) {
-            g.select("line.min")
-              .attr("x1", points_lists => scale2(fmin(points_lists)))
-              .attr("x2", points_lists => scale2(fmin(points_lists)));
+          div.select(".max-text")
+            .text(fmaxtext);
+        }
 
-            div.select(".min-text")
-              .text(points_lists => exponentFormat
-                    ? fmin(points_lists).toExponential(1)
-                    : fmin(points_lists).toPrecision(2));
-          }
-
-
-          if (fixedMax == null) {
-            g.select("line.max")
-              .attr("x1", fwidth)
-              .attr("x2", fwidth);
-
-            div.select(".max-text")
-              .text(points_lists => exponentFormat
-                    ? fmax(points_lists).toExponential(1)
-                    : fmax(points_lists).toPrecision(2));
-          }
-
-          g.selectAll(".pointsList")
-            .data(d => d)
-            .join(enter => enter.append("g")
-                  .attr("class", "pointsList")
-                  .attr("transform", (_, i) => `translate(0,${i * rowHeight})`))
-            .selectAll(".point")
-            .data(d => d)
-            .join(enter => enter.append("circle")
-                  .attr("class", "point")
-                  .attr("cy", pointRadius)
-                  .attr("r", pointRadius)
-                  .attr('fill-opacity', 0.2)
-                  .attr("fill", "blue")
-                  .attr("stroke", "none"))
-            .transition()
-            .duration(anim_t)
-            .ease(d3.easeLinear)
-            .attr("cx", d => scale2(d));
-        });
-
-    });
+        g.selectAll(".pointsLists")
+          .data(d => d.pointsLists)
+          .join(enter => enter.append("g")
+                .attr("class", "pointsList")
+                .attr("transform", (_, i) => `translate(0,${i * rowHeight + pointRadius})`))
+          .selectAll(".point")
+          .data(d => d)
+          .join(enter => enter.append("circle")
+                .attr("class", "point")
+                .attr("r", pointRadius)
+                .attr("cx", d => scale(d)),
+                update => update.transition()
+                .duration(anim_t)
+                .ease(d3.easeLinear)
+                .attr("cx", d => scale(d)));
+      });
   }
 
   render.scale = function(value) {
@@ -536,15 +533,15 @@ function scalarDistributionListView() {
     return render;
   };
 
-  render.fixedMin = function(value) {
-    if (!arguments.length) return fixedMin;
-    fixedMin = value;
+  render.useDataMin = function(value) {
+    if (!arguments.length) return useDataMin;
+    useDataMin = value;
     return render;
   };
 
-  render.fixedMax = function(value) {
-    if (!arguments.length) return fixedMax;
-    fixedMax = value;
+  render.useDataMax = function(value) {
+    if (!arguments.length) return useDataMax;
+    useDataMax = value;
     return render;
   };
 
@@ -996,7 +993,9 @@ function expressionView(expr, keys) {
     return exprHTML;
   })();
 
-  let valueType = "scalar";
+  let valueType = "scalar",
+      asynchronous = false,
+      onfinished = () => null;
 
   function render(selection) {
     selection.each(function(model) {
@@ -1007,54 +1006,135 @@ function expressionView(expr, keys) {
                   .attr("class", "expression")
                   .html(d => exprHTML));
 
-      let mixingWeightComponent, scaleComponent;
       if (valueType == "scalar") {
-        scaleComponent = scalarView()
+        let scaleComponent = scalarView()
           .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
           .height(12)
-          .fontSize(10);
-        mixingWeightComponent = mixingWeightView();
+          .fontSize(10),
+          mixingWeightComponent = mixingWeightView();
+
+        expression.selectAll("span.scale-value").each(function(_) {
+          const scaleValue = d3.select(this),
+                k = scaleValue.attr("data-key");
+  
+          scaleValue.datum(model[k])
+            .call(scaleComponent);
+        });
+        expression.selectAll("span.mixing-weight-value").each(function(_) {
+          let weightValue = d3.select(this);
+          let k = weightValue.attr("data-key");
+          weightValue.datum(model[k])
+            .call(mixingWeightComponent);
+        });
       } else if (valueType == "scalarDistribution") {
-        scaleComponent = scalarDistributionView()
+        let scaleComponent = scalarDistributionView()
           .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
           .height(10)
-          .fontSize(10);
-        mixingWeightComponent = scalarDistributionView()
+          .fontSize(10),
+           mixingWeightComponent = scalarDistributionView()
           .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
           .fixedMax(1)
           .height(10)
           .fontSize(10);
+
+          expression.selectAll("span.scale-value").each(function(_) {
+            const scaleValue = d3.select(this),
+                  k = scaleValue.attr("data-key");
+    
+            scaleValue.datum(model[k])
+              .call(scaleComponent);
+          });
+          expression.selectAll("span.mixing-weight-value").each(function(_) {
+            let weightValue = d3.select(this);
+            let k = weightValue.attr("data-key");
+            weightValue.datum(model[k])
+              .call(mixingWeightComponent);
+          });
       } else if (valueType == "scalarDistributionList") {
-        scaleComponent = scalarDistributionListView()
-          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+
+        let scaleValue = expression.selectAll("span.scale-value"),
+            scaleKeys = scaleValue.nodes().map(n => n.getAttribute("data-key")),
+            allPointsLists = scaleKeys.map(k => model[k]),
+            mins = allPointsLists.map(pointsLists => d3.min(pointsLists, points => d3.min(points))),
+            maxs = allPointsLists.map(pointsLists => d3.max(pointsLists, points => d3.max(points))),
+            globalMin = d3.min(mins),
+            globalMax = d3.max(maxs),
+            data = allPointsLists.map((pointsLists, i) => {
+              return {min: mins[i], max: maxs[i],
+                      pointsLists};
+            });
+
+        let scaleComponent = scalarDistributionListView()
+          .scale(d3.scaleLinear().domain([0, globalMax]).range([0, 200]))
           .height(10)
+          .useDataMax(true)
           .fontSize(10);
-        mixingWeightComponent = scalarDistributionListView()
+
+        let topLevelFinished = [false, false];
+
+        if (asynchronous) {
+          let finished = new Array(data.length).fill(false);
+          scaleValue.data(data)
+            .each(function(d, i) {
+              setTimeout(() => {
+                d3.select(this).call(scaleComponent);
+                finished[i] = true;
+                if (finished.every(d => d)) {
+                  topLevelFinished[0] = true;
+                  if (topLevelFinished.every(d => d)) onfinished();
+                }
+              }, 0);
+            });
+        } else {
+          scaleValue.data(data).call(scaleComponent);
+        }
+
+        let mixingWeightComponent = scalarDistributionListView()
           .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
-          .fixedMax(1)
           .height(10)
           .fontSize(10);
+
+
+        let mixingWeightValue = expression.selectAll("span.mixing-weight-value"),
+            mixingWeightKeys = mixingWeightValue.nodes().map(n => n.getAttribute("data-key")),
+            mwData = mixingWeightKeys.map(
+              k => { return {pointsLists: model[k]}; });
+
+        if (asynchronous) {
+          let finished = new Array(mwData.length).fill(false);
+          mixingWeightValue.data(mwData)
+            .each(function(d, i) {
+              setTimeout(() => {
+                d3.select(this).call(mixingWeightComponent);
+                finished[i] = true;
+                if (finished.every(d => d)) {
+                  topLevelFinished[1] = true;
+                  if (topLevelFinished.every(d => d)) onfinished();
+                }
+              }, 0);
+            });
+        } else {
+          mixingWeightValue.data(mwData).call(mixingWeightComponent);
+        }
       }
-
-      expression.selectAll("span.scale-value").each(function(_) {
-        const scaleValue = d3.select(this),
-              k = scaleValue.attr("data-key");
-
-        scaleValue.datum(model[k])
-          .call(scaleComponent);
-      });
-      expression.selectAll("span.mixing-weight-value").each(function(_) {
-        let weightValue = d3.select(this);
-        let k = weightValue.attr("data-key");
-        weightValue.datum(model[k])
-          .call(mixingWeightComponent);
-      });
     });
   }
 
   render.valueType = function(_) {
     if (!arguments.length) return valueType;
     valueType = _;
+    return render;
+  };
+
+  render.asynchronous = function(_) {
+    if (!arguments.length) return asynchronous;
+    asynchronous = _;
+    return render;
+  };
+
+  render.onfinished = function(_) {
+    if (!arguments.length) return onfinished;
+    onfinished = _;
     return render;
   };
 

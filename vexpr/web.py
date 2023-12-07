@@ -15,25 +15,24 @@ def header_content():
     ).decode('utf-8')
 
     return f"""
-    <style>
-    div.vexpr-output svg {{
-      max-width: initial;
-    }}
-    </style>
-    <script>
-      const vexpr_undef_define = ("function"==typeof define);
-      let vexpr_prev_define = undefined;
-      if (vexpr_undef_define) {{
-        vexpr_prev_define = define;
-        define = undefined;
-      }}
-      {d3_js}
-      {vexpr_js}
-      if (vexpr_undef_define) {{
-        define = vexpr_prev_define;
-      }}
-    </script>
-    """
+<style>
+div.vexpr-output svg {{
+  max-width: initial;
+}}
+</style>
+<script>
+  const vexpr_undef_define = ("function"==typeof define);
+  let vexpr_prev_define = undefined;
+  if (vexpr_undef_define) {{
+    vexpr_prev_define = define;
+    define = undefined;
+  }}
+  {d3_js}
+  {vexpr_js}
+  if (vexpr_undef_define) {{
+    define = vexpr_prev_define;
+  }}
+</script>"""
 
 
 
@@ -92,18 +91,20 @@ def position_distribution_view(class_name, key):
 def position_distribution_list_view(class_name, key):
     return f"""
       (function() {{
-        const element = container.querySelectorAll(".{class_name}")[0],
+        const element = container.querySelectorAll(".{class_name}")[0];
+        renderTimestepFunctions.push(function (model) {{
+            const pointsLists = model["{key}"],
+                  min = d3.min(pointsLists, points => d3.min(points)),
+                  max = d3.max(pointsLists, points => d3.max(points)),
               component = vexpr.scalarDistributionListView()
-              .scale(d3.scaleLinear().domain([-1.5, 1.5]).range([0, 400]))
-              .fixedMin(null)
-              //.fixedMax(1.5)
+              .scale(d3.scaleLinear().domain([min, max]).range([0, 232]))
+              .useDataMin(true)
+              .useDataMax(true)
               .padRight(8)
               .height(12)
               .fontSize(13)
-              .tfrac(2.7/3);
-
-        renderTimestepFunctions.push(function (model) {{
-          d3.select(element).datum(model["{key}"]).call(component);
+              .tfrac(2.7/3)
+          d3.select(element).datum({{pointsLists, min, max}}).call(component);
         }});
       }})();
     """
@@ -197,19 +198,22 @@ def scalar_distribution_view(class_name, key):
 def scalar_distribution_list_view(class_name, key):
     return f"""
       (function() {{
-        const element = container.querySelectorAll(".{class_name}")[0],
-              component = vexpr.scalarDistributionListView()
-              .scale(d3.scaleLog().domain([1e-7, 5e0]).range([0, 400]))
-              .fixedMin(null)
-              // .fixedMin(1e-7)
+        const element = container.querySelectorAll(".{class_name}")[0];
+        renderTimestepFunctions.push(function(model) {{
+          const pointsLists = model["{key}"],
+                min = d3.min(pointsLists, points => d3.min(points)),
+                max = d3.max(pointsLists, points => d3.max(points)),
+                component = vexpr.scalarDistributionListView()
+              .scale(d3.scaleLog().domain([min, max]).range([0, 215]))
+              .useDataMin(true)
+              .useDataMax(true)
               .exponentFormat(true)
               .padRight(8)
               .height(12)
               .fontSize(13)
               .tfrac(2.7/3);
 
-        renderTimestepFunctions.push(function (model) {{
-          d3.select(element).datum(model["{key}"]).call(component);
+          d3.select(element).datum({{pointsLists, min, max}}).call(component);
         }});
       }})();
     """
@@ -301,30 +305,29 @@ def visualize_timeline_html(html_preamble, encoded_to_timesteps, components, enc
     components_str = "\n".join(components)
 
     return f"""
-    {html_preamble(element_id)}
-    <script>
-    (function() {{
-      let renderTimestepFunctions = [],
-          renderTimeFunctions = [],
-          timeStateComponent = vexpr.hiddenTimeState()
-          .renderTimestep(model => {{
-            renderTimestepFunctions.forEach(render => render(model))
-          }})
-          .renderTime((min, max, curr) => {{
-            renderTimeFunctions.forEach(render => render(min, max, curr))
-          }});
+{html_preamble(element_id)}
+<script>
+(function() {{
+  let renderTimestepFunctions = [],
+      renderTimeFunctions = [],
+      timeStateComponent = vexpr.hiddenTimeState()
+      .renderTimestep(model => {{
+        renderTimestepFunctions.forEach(render => render(model))
+      }})
+      .renderTime((min, max, curr) => {{
+        renderTimeFunctions.forEach(render => render(min, max, curr))
+      }});
 
-      const container = document.getElementById("{element_id}");
+  const container = document.getElementById("{element_id}");
 
-      {components_str}
+  {components_str}
 
-      const encodedData = `{encoded_data}`;
-      {encoded_to_timesteps}
+  const encodedData = `{encoded_data}`;
+  {encoded_to_timesteps}
 
-      d3.select(container).datum(timesteps).call(timeStateComponent);
-    }})();
-    </script>
-    """
+  d3.select(container).datum(timesteps).call(timeStateComponent);
+}})();
+</script>"""
 
 
 def visualize_snapshot_html(html_preamble, encoded_to_snapshot, components, encoded_data):
@@ -332,33 +335,32 @@ def visualize_snapshot_html(html_preamble, encoded_to_snapshot, components, enco
     components_str = "\n".join(components)
 
     return f"""
-    {html_preamble(element_id)}
-    <script>
-    (function() {{
-      let renderTimestepFunctions = [];
+{html_preamble(element_id)}
+<script>
+(function() {{
+  let renderTimestepFunctions = [];
 
-      const container = document.getElementById("{element_id}");
+  const container = document.getElementById("{element_id}");
 
-      {components_str}
+  {components_str}
 
-      const encodedData = `{encoded_data}`;
-      {encoded_to_snapshot}
-      renderTimestepFunctions.forEach(render => render(snapshot));
-    }})();
-    </script>
-    """
+  const encodedData = `{encoded_data}`;
+  {encoded_to_snapshot}
+  renderTimestepFunctions.forEach(render => render(snapshot));
+}})();
+</script>"""
 
 
 def full_html(body):
     return f"""<!doctype html>
-    <html>
-    <head>
-    {header_content()}
-    </head>
-    <body>
-    {body}
-    </body>
-    </html>"""
+<html>
+<head>
+{header_content()}
+</head>
+<body>
+{body}
+</body>
+</html>"""
 
 
 def alias_values(expr):
