@@ -100,10 +100,8 @@ def position_distribution_list_view(class_name, key):
               .scale(d3.scaleLinear().domain([min, max]).range([0, 232]))
               .useDataMin(true)
               .useDataMax(true)
-              .padRight(8)
               .height(12)
-              .fontSize(13)
-              .tfrac(2.7/3)
+              .fontSize(13);
           d3.select(element).datum({{pointsLists, min, max}}).call(component);
         }});
       }})();
@@ -200,18 +198,24 @@ def scalar_distribution_list_view(class_name, key):
       (function() {{
         const element = container.querySelectorAll(".{class_name}")[0];
         renderTimestepFunctions.push(function(model) {{
-          const pointsLists = model["{key}"],
-                min = d3.min(pointsLists, points => d3.min(points)),
-                max = d3.max(pointsLists, points => d3.max(points)),
-                component = vexpr.scalarDistributionListView()
+          const pointsLists = model["{key}"];
+
+          let min = d3.min(pointsLists, points => d3.min(points)),
+              max = d3.max(pointsLists, points => d3.max(points));
+
+         if (min == max) {{
+           // Need a valid scale, so these need to be different.
+           // Visualize each point as a low value.
+           max *= 10;
+         }}
+
+         const component = vexpr.scalarDistributionListView()
               .scale(d3.scaleLog().domain([min, max]).range([0, 215]))
               .useDataMin(true)
               .useDataMax(true)
               .exponentFormat(true)
-              .padRight(8)
               .height(12)
-              .fontSize(13)
-              .tfrac(2.7/3);
+              .fontSize(13);
 
           d3.select(element).datum({{pointsLists, min, max}}).call(component);
         }});

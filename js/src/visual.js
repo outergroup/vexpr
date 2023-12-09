@@ -384,16 +384,14 @@ function toPrecisionThrifty(d, precision) {
 
 function scalarDistributionListView() {
   let scale = d3.scaleLinear(),
-      pixelsPerUnit = 100,
       exponentFormat = false,
       height = 30,
       fontSize = "13px",
-      padRight = 8,
-      tfrac = 22.5/30,
       rowHeight = 2,
       pointRadius = 1,
       useDataMin = false,
-      useDataMax = false;
+      useDataMax = false,
+      cnvMult = 4;
 
   function render(selection) {
     const fmin = useDataMin
@@ -422,7 +420,7 @@ function scalarDistributionListView() {
             .style("border", "1px solid black")
             .style("border-radius", "3px")
             .style("padding-left", "5px")
-            .style("padding-right", "6px")
+            .style("padding-right", "12px")
             .style("margin-top", "1px")
             .style("margin-bottom", "1px")
             .call(div => {
@@ -434,33 +432,9 @@ function scalarDistributionListView() {
                 .style("top", d => `-${d.pointsLists.length * rowHeight / 2 - 5}px`)
                 .text(fmintext);
 
-              div.append("svg")
+              div.append("canvas")
                 .style("position", "relative")
-                .style("left", "4px")
-                .append("g")
-                .attr("class", "content")
-                .attr("transform", "translate(1,0)")
-                .call(g => {
-                  g.append("rect")
-                    .attr("fill", "silver")
-                    .attr("width", fwidth);
-
-                  g.append("line")
-                    .attr("class", "min")
-                    .attr("y1", 0)
-                    .attr("stroke", "gray")
-                    .attr("stroke-width", 2)
-                    .attr("x1", fxmin)
-                    .attr("x2", fxmin);
-
-                  g.append("line")
-                    .attr("class", "max")
-                    .attr("y1", 0)
-                    .attr("stroke", "gray")
-                    .attr("stroke-width", 2)
-                    .attr("x1", fxmax)
-                    .attr("x2", fxmax);
-                });
+                .style("left", "4px");
 
               div.append('span')
                 .attr('class', 'max-text')
@@ -469,61 +443,66 @@ function scalarDistributionListView() {
                 .style("position", "relative")
                 .style("top", pointsListsData =>
                   `-${pointsListsData.pointsLists.length * rowHeight / 2 - 5}px`)
-                .style("left", "2px")
+                .style("left", "8px")
                 .text(fmaxtext);
             }))
       .call(div => {
         div.style("height", pointsListsData => `${fheight(pointsListsData)}px`);
 
-        let svg = div.select("svg")
-            .attr("width", d => fwidth(d) + padRight + 2)
-            .attr("height", d => fheight(d));
-
-        let g = svg.select("g.content");
-
-        g.select("rect")
-          .attr("width", fwidth)
-          .attr("height", fheight);
-
-        g.select("line.min")
-          .attr("y2", fheight);
-
-        g.select("line.max")
-          .attr("y2", fheight);
-
         if (useDataMin) {
-          g.select("line.min")
-            .attr("x1", fxmin)
-            .attr("x2", fxmin);
-
           div.select(".min-text")
             .text(fmintext);
         }
 
         if (useDataMax) {
-          g.select("line.max")
-            .attr("x1", fxmax)
-            .attr("x2", fxmax);
-
           div.select(".max-text")
             .text(fmaxtext);
         }
 
-        g.selectAll(".pointsLists")
-          .data(d => d.pointsLists)
-          .join(enter => enter.append("g")
-                .attr("class", "pointsList")
-                .attr("transform", (_, i) => `translate(0,${i * rowHeight + pointRadius})`))
-          .selectAll(".point")
-          .data(d => d)
-          .join(enter => enter.append("circle")
-                .attr("class", "point")
-                .attr("r", pointRadius)
-                .attr("cx", d => scale(d)),
-                update => update.transition()
-                .duration(anim_t)
-                .ease(d3.easeLinear)
-                .attr("cx", d => scale(d)));
+        let canvas = div.select("canvas")
+          .attr("width", d => cnvMult * (fwidth(d) + 2))
+          .attr("height", d => cnvMult * fheight(d))
+          .style("width", d => `${fwidth(d) + 2}px`)
+          .style("height", d => `${fheight(d)}px`);
+
+        canvas.each(function(pointsListsData) {
+          let ctx = this.getContext("2d");
+
+          const cnv_x = d3.scaleLinear()
+            .domain(scale.domain())
+            .range([cnvMult * (1 + scale.range()[0]), cnvMult * (scale.range()[1] + 1)]),
+                cnv_y = d3.scaleLinear()
+            .domain([0, pointsListsData.pointsLists.length - 1])
+            .range([cnvMult * 0.5, cnvMult * rowHeight * (pointsListsData.pointsLists.length + 0.5)]);
+
+          // draw silver rect
+          ctx.fillStyle = "silver";
+          ctx.fillRect(0, 0, cnvMult * fwidth(pointsListsData), cnvMult * fheight(pointsListsData));
+
+          ctx.strokeStyle = "gray";
+          ctx.lineWidth = 2 * cnvMult;
+
+          ctx.beginPath();
+          ctx.moveTo(cnv_x(fmin(pointsListsData)), cnv_y(0));
+          ctx.lineTo(cnv_x(fmin(pointsListsData)), cnv_y(pointsListsData.pointsLists.length - 1));
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(cnv_x(fmax(pointsListsData)), cnv_y(0));
+          ctx.lineTo(cnv_x(fmax(pointsListsData)), cnv_y(pointsListsData.pointsLists.length - 1));
+          ctx.stroke();
+
+          ctx.fillStyle = "blue";
+          ctx.globalAlpha = 0.4;
+
+          pointsListsData.pointsLists.forEach((points, i) => {
+            points.forEach(point => {
+              ctx.beginPath();
+              ctx.arc(cnv_x(point), cnv_y(i), pointRadius*cnvMult, 0, 2 * Math.PI);
+              ctx.fill();
+            });
+          });
+        });
       });
   }
 
@@ -563,20 +542,9 @@ function scalarDistributionListView() {
     return render;
   };
 
-  render.padRight = function(value) {
-    if (!arguments.length) return padRight;
-    padRight = value;
-    return render;
-  }
-
-  render.tfrac = function(value) {
-    if (!arguments.length) return tfrac;
-    tfrac = value;
-    return render;
-  }
-
   return render;
 }
+
 
 function positionView() {
   let scale = d3.scaleLinear();
@@ -1093,7 +1061,6 @@ function expressionView(expr, keys) {
           .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
           .height(10)
           .fontSize(10);
-
 
         let mixingWeightValue = expression.selectAll("span.mixing-weight-value"),
             mixingWeightKeys = mixingWeightValue.nodes().map(n => n.getAttribute("data-key")),
