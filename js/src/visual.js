@@ -2,7 +2,7 @@ import * as d3 from "d3";
 import { play_button_svg, pause_button_svg, restart_button_svg } from "./buttons";
 
 
-const anim_t = 100;
+const anim_t = 200;
 
 function hiddenTimeState() {
   let renderTimestep,
@@ -18,6 +18,7 @@ function hiddenTimeState() {
           // but we only want to run this when timeState isn't an
           // empty node.
           timeState.node()._vexprState = {
+            renderedTimestep: null,
             userSelectedTimestep: null,
           };
         });
@@ -33,13 +34,20 @@ function hiddenTimeState() {
           renderTime(1, timesteps.length, selectedTimestep);
 
           timeState.node()._vexprState.selectTimestep = function(timestep) {
+            let state = timeState.node()._vexprState;
+
             const tDiscrete = Math.floor(timestep);
             if (tDiscrete == timesteps.length) {
-              timeState.node()._vexprState.userSelectedTimestep = null;
+              state.userSelectedTimestep = null;
             } else {
-              timeState.node()._vexprState.userSelectedTimestep = tDiscrete;
+              state.userSelectedTimestep = tDiscrete;
             }
-            renderTimestep(timesteps[tDiscrete - 1]);
+
+            if (tDiscrete != state.renderedTimestep) {
+              renderTimestep(timesteps[tDiscrete - 1]);
+              state.renderedTimestep = tDiscrete;
+            }
+
             renderTime(1, timesteps.length, timestep);
           }
         });
@@ -173,165 +181,170 @@ function scalarView() {
 
 function scalarDistributionView() {
   let scale = d3.scaleLinear(),
-      eps = 0,
       exponentFormat = false,
       height = 30,
       fontSize = "13px",
-      padRight = 8,
-      tfrac = 22.5/30,
-      fixedMin = 0,
-      fixedMax = null;
+      useDataMin = false,
+      useDataMax = false,
+      cnvMult = 4,
+      pointRadius = 2.5,
+      maxWidth = 300;
+
+  let cnv_x, cnv_y, cnv_y05, cnv_y0, cnv_y1;
+  function onScaleUpdate() {
+    cnv_x = d3.scaleLinear()
+        .domain(scale.domain())
+        .range([cnvMult * (1 + scale.range()[0]), cnvMult * (scale.range()[1] + 1)]);
+    cnv_y = d3.scaleLinear()
+        .domain([0, 1])
+        .range([0, cnvMult * height]);
+    cnv_y05 = cnv_y(0.5);
+    cnv_y0 = cnv_y(0);
+    cnv_y1 = cnv_y(1);
+  }
+
+  onScaleUpdate();
+
+  function fmin(points) {
+    if (useDataMin) {
+      return d3.min(points);
+    } else {
+      return scale.domain()[0];
+    }
+  }
+
+  function fmax(points) {
+    if (useDataMax) {
+      return d3.max(points);
+    } else {
+      return scale.domain()[1];
+    }
+  }
+
+  const fmintext = points => exponentFormat
+        ? fmin(points).toExponential(1)
+        : toPrecisionThrifty(fmin(points), 2),
+        fmaxtext = points => exponentFormat
+        ? fmax(points).toExponential(1)
+        : toPrecisionThrifty(fmax(points), 2);
+
+  function draw(canvasNode, div, points) {
+    const min = useDataMin
+      ? d3.min(points)
+      : scale.domain()[0],
+      max = useDataMax
+      ? d3.max(points)
+      : scale.domain()[1],
+      width = scale(max) - scale(min);
+
+    if (!canvasNode._vexprInitialized || (useDataMin || useDataMax)) {
+      div.select(".mintext")
+      // If this text is rapidly animating, the varying precision to
+      // toPrecisionThrifty causes too much flickering.
+        .text(useDataMin ? min.toPrecision(2)
+                         : toPrecisionThrifty(min, 2));
+      div.select(".maxtext")
+        .text(useDataMax ? max.toPrecision(2)
+                         : toPrecisionThrifty(max, 2));
+      div.select(".canvasContainer")
+        .style("width", `${width}px`);
+      canvasNode._vexprInitialized = true;
+    }
+
+    let ctx = canvasNode.getContext("2d");
+    ctx.clearRect(0, 0, canvasNode.width, canvasNode.height)
+    ctx.fillStyle = "blue";
+    ctx.globalAlpha = 0.4;
+    ctx.lineWidth = 0;
+    for (let i = 0; i < points.length; i++) {
+      ctx.beginPath();
+      ctx.arc(cnv_x(points[i]), cnv_y05, pointRadius*cnvMult, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
 
   function render(selection) {
-    selection.each(function(points) {
-      const max = d3.max(points),
-            median = d3.median(points),
-            width = scale(max) - scale(fixedMin),
-            rectWidth = scale(median) - scale(fixedMin);
+    selection.selectAll(".visualization")
+      .data(d => [d])
+      .join(enter => enter.append("div")
+            .attr("class", "visualization")
+            .style("position", "relative")
+            .style("vertical-align", "middle")
+            .style("display", "inline-block")
+            .style("padding-right", "12px")
+            .call(div => {
+              div.append('span')
+                .attr("class", "mintext")
+                .style("font-size", fontSize)
+                .style("color", "gray")
+                .style("position", "relative")
+                .text(fmintext);
 
-      d3.select(this)
-        .selectAll(".visualization")
-        .data([points])
-        .join(enter => enter
-              .append("div")
-              .attr("class", "visualization")
-              .style("position", "relative")
-              .style("vertical-align", "middle")
+              div.append("div")
+              .attr("class", "canvasContainer")
               .style("display", "inline-block")
-              .call(div => {
+              .style("position", "relative")
+              .style("overflow", "hidden")
+              .style("left", "4px")
+              .style("height", `${height}px`)
+              .style("border-left", "2px solid gray")
+              .style("border-right", "2px solid gray")
+              .style("background-color", "silver")
+              .append("canvas")
+                .attr("height", cnvMult * height)
+                .style("height", `${height}px`)
+                .attr("width", cnvMult * maxWidth)
+                .style("width", `${maxWidth}px`)
+                .style("vertical-align", "top");
 
-                div.append('span')
-                  .style("font-size", fontSize)
-                  .style("color", "gray")
-                  .style("position", "relative")
-                  .style("top", "-2px")
-                  .text(fixedMin.toPrecision(2));
+              div.append('span')
+                .attr("class", "maxtext")
+                .style("font-size", fontSize)
+                .style("color", "gray")
+                .style("position", "relative")
+                .style("left", "8px")
+                .text(fmaxtext);
+            }))
+      .call(div => {
+        div.select(".canvasContainer").select("canvas").each(function(points) {
+          const canvas = d3.select(this);
+          if (this._vexprPrevPoints) {
+            const interpolator = d3.interpolateNumberArray(this._vexprPrevPoints, points);
 
+            let timer = d3.timer((elapsed) => {
+              const t = Math.min(1, d3.easeCubic(elapsed / anim_t));
+              draw(this, div, interpolator(t));
+              if (t === 1) {
+                timer.stop();
+              }
+            });
 
-                let svg = div.append("svg")
-                  .attr("class", "visualization-svg")
-                  .attr("height", height+2)
-                  .style("position", "relative")
-                  .style("left", "4px")
-                  // .style("top", "13px")
-                  .call(svg => {
-                    let g = svg.append("g")
-                        .attr("class", "content")
-                        .attr("transform", "translate(1,1)");
-
-                    let maxRect = g.append("rect")
-                      .attr("class", "max")
-                      .attr("height", height)
-                      .attr("fill", "silver");
-
-                    g.append("line")
-                      .attr("y1", 0)
-                      .attr("y2", height)
-                      .attr("stroke", "gray")
-                      .attr("stroke-width", 2);
-
-                    let maxLine = g.append("line")
-                        .attr("class", "max")
-                        .attr("y1", 0)
-                        .attr("y2", height)
-                        .attr("stroke", "gray")
-                        .attr("stroke-width", 2);
-
-                    if (fixedMax !== null) {
-                      const x = scale(fixedMax) - scale(fixedMin);
-                      maxRect.attr("width", x);
-                      maxLine.attr("x1", x).attr("x2", x);
-                    }
-
-                    return svg;
-                  });
-
-                let maxText = div.append('span')
-                    .attr('class', 'visualization-text')
-                    .style("font-size", fontSize)
-                    .style("color", "gray")
-                    .style("position", "relative")
-                    .style("top", "-2px")
-                    .style("left", "2px");
-
-                if (fixedMax != null) {
-                  maxText
-                    .text(exponentFormat
-                          ? fixedMax.toExponential(1)
-                          : fixedMax.toPrecision(2));
-
-                  const w = scale(fixedMax) - scale(fixedMin);
-                  svg.attr("width", w + padRight);
-                }
-
-                return div;
-              }))
-        .call(div => {
-          let svg = div.select(".visualization-svg"),
-              content = svg.select("g.content");
-
-          if (fixedMax == null) {
-            svg
-              .transition()
-              .duration(anim_t)
-              .ease(d3.easeLinear)
-              .attr("width", width + padRight);
-
-            content.select("rect.max")
-              .transition()
-              .duration(anim_t)
-              .ease(d3.easeLinear)
-              .attr('width', width);
-
-            content.select("line.max")
-              .transition()
-              .duration(anim_t)
-              .ease(d3.easeLinear)
-              .attr('x1', width)
-              .attr('x2', width);
-
-            div.select(".visualization-text")
-              .text(exponentFormat
-                    ? max.toExponential(1)
-                    : max.toPrecision(2));
+          } else {
+            draw(this, div, points);
           }
 
+          this._vexprPrevPoints = points;
 
-          content.selectAll(".point")
-            .data(d => d)
-            .join(enter => enter.append("circle")
-                  .attr("class", "point")
-                  .attr("r", 2.5)
-                  .attr("cy", height / 2)
-                  .attr('fill-opacity', 0.4)
-                  .attr("fill", "blue")
-                  .attr("stroke", "none")
-                  )
-            .transition()
-            .duration(anim_t)
-            .ease(d3.easeLinear)
-            .attr("cx", d => scale(d));
-
-          return div;
         });
-    });
+      });
   }
 
   render.scale = function(value) {
     if (!arguments.length) return scale;
     scale = value;
+    onScaleUpdate();
     return render;
   };
 
-  render.fixedMin = function(value) {
-    if (!arguments.length) return fixedMin;
-    fixedMin = value;
+  render.useDataMin = function(value) {
+    if (!arguments.length) return useDataMin;
+    useDataMin = value;
     return render;
   };
 
-  render.fixedMax = function(value) {
-    if (!arguments.length) return fixedMax;
-    fixedMax = value;
+  render.useDataMax = function(value) {
+    if (!arguments.length) return useDataMax;
+    useDataMax = value;
     return render;
   };
 
@@ -344,6 +357,7 @@ function scalarDistributionView() {
   render.height = function(value) {
     if (!arguments.length) return height;
     height = value;
+    onScaleUpdate();
     return render;
   };
 
@@ -352,18 +366,6 @@ function scalarDistributionView() {
     fontSize = value;
     return render;
   };
-
-  render.padRight = function(value) {
-    if (!arguments.length) return padRight;
-    padRight = value;
-    return render;
-  }
-
-  render.tfrac = function(value) {
-    if (!arguments.length) return tfrac;
-    tfrac = value;
-    return render;
-  }
 
   return render;
 }
@@ -693,9 +695,8 @@ function mixingWeightView() {
 function timeControl() {
   let onupdate;
 
-  const width = 645,
-        padding = {top: 30, right: 95, left: 105, bottom: 60},
-        slider_width = width - padding.right - padding.left - 35;
+  const padding = {top: 5, right: 0, left: 8, bottom: 10},
+        msPerStep = 200;
 
   function renderValue(selection) {
     const slider_container = selection.select(".slider_container_container")
@@ -705,12 +706,19 @@ function timeControl() {
       .property("value", d => d.curr);
     slider_container.select(".slider_text")
       .style("left", d => {
-        const scale = d3.scaleLinear()
-              .domain([d.min, d.max])
-              .range([-32, slider_width - 13 - 32]);
-        return `${scale(d.curr)}px`;
+        const pctScale = d3.scaleLinear()
+        .domain([d.min, d.max])
+        .range([0, 100]),
+              pxScale = d3.scaleLinear()
+        .domain([d.min, d.max])
+        .range([-30, -45]);
+        return `calc(${pctScale(d.curr)}% + ${pxScale(d.curr)}px)`;
       })
-      .text(d => `Step ${Math.floor(d.curr)}`);
+      .text(d => {
+        const step = Math.floor(d.curr),
+              stepLabel = d.labels !== undefined ? d.labels[step - d.min] : step;
+        return `Step ${stepLabel}`;
+      });
   }
 
   function render(selection) {
@@ -728,10 +736,9 @@ function timeControl() {
                 slider_container = slider_container_container.append("div")
                 .attr("class", "slider_container")
                 .style("display", "inline-block")
-                .style("width", `${slider_width}px`)
+                .style("width", `calc(100% - ${25 + padding.left}px)`)
                 .style("position", "relative")
-                .style("margin-left", `${padding.left + 15}px`)
-                .style("margin-top", padding.top + "px");
+                .style("margin", `${padding.top}px ${padding.right}px ${padding.bottom}px ${padding.left}px`);
 
           const slider_ = slider_container.append("input")
                 .attr("class", "slider")
@@ -745,7 +752,7 @@ function timeControl() {
             .attr("class", "slider_text")
             .style("position", "absolute")
             .style("top", "-20px")
-            .style("width", "80px")
+            .style("width", "80px")  // avoid text wrapping when it's near an edge
             .style("text-align", "center");
 
           slider_container_container.each(function(d) {
@@ -762,8 +769,7 @@ function timeControl() {
               // on enter. Thus it needs to run inside of enter.each.
               let stopped = true,
                   pointer_down = false,
-                  vStart,
-                  tStart = null;
+                  vStart;
 
               function restart() {
                 slider_.node().value = 1;
@@ -802,7 +808,6 @@ function timeControl() {
 
               function play() {
                 vStart = parseFloat(slider_.node().value);
-                tStart = null;
 
                 if (vStart >= getMax()) {
                   vStart = getMax();
@@ -811,32 +816,31 @@ function timeControl() {
                   stopped = false;
                 }
 
-                function nextFrame(timestamp) {
-                  if (!stopped && !pointer_down) {
-                    if (tStart === null) tStart = timestamp;
-                    let elapsed = timestamp - tStart;
-                    let value = vStart + elapsed / 50;
-
-                    if (value >= getMax()) {
-                      value = getMax();
-                      stopped = true;
-                    }
-
-                    let d = selection.datum();
-                    d.curr = value;
-                    renderValue(selection.datum(d))
-                    slider_.node()._vp_onupdate(value);
-                  }
-
-                  if (stopped) {
-                    set_stopped_button();
-                  } else if (!pointer_down) {
-                    requestAnimationFrame(nextFrame);
-                  }
-                }
-
                 if (!stopped) {
-                  requestAnimationFrame(nextFrame);
+                  let timer = d3.timer((elapsed) => {
+                    if (!stopped && !pointer_down) {
+                      let value = vStart + elapsed / msPerStep;
+  
+                      if (value >= getMax()) {
+                        value = getMax();
+                        stopped = true;
+                      }
+  
+                      let d = selection.datum();
+                      d.curr = value;
+                      renderValue(selection.datum(d))
+                      slider_.node()._vp_onupdate(value);
+                    }
+  
+                    if (stopped) {
+                      set_stopped_button();
+                    }
+  
+                    if (stopped || pointer_down) {
+                      timer.stop();
+                    }
+                  });
+
                   play_button.style("display", "none");
                   pause_button.style("display", "inline");
                   restart_button.style("display", "none");
@@ -874,7 +878,6 @@ function timeControl() {
                     set_stopped_button();
                   } else {
                     vStart = parseFloat(slider_.node().value);
-                    tStart = null;
                     play();
                     set_playing_button();
                   }
@@ -963,7 +966,34 @@ function expressionView(expr, keys) {
 
   let valueType = "scalar",
       asynchronous = false,
-      onfinished = () => null;
+      onfinished = () => null,
+      scaleComponent,
+      mixingWeightComponent;
+
+  function initializeComponents() {
+    if (valueType == "scalar") {
+      scaleComponent = scalarView()
+        .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+        .height(12)
+        .fontSize(10);
+      mixingWeightComponent = mixingWeightView();
+    } else if (valueType == "scalarDistribution") {
+      scaleComponent = scalarDistributionView()
+        .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
+        .useDataMax(true)
+        .height(12)
+        .fontSize(10);
+      mixingWeightComponent = scalarDistributionView()
+        .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
+        .height(12)
+        .fontSize(10);
+    } else if (valueType == "scalarDistributionList") {
+      scaleComponent = undefined;
+      mixingWeightComponent = undefined;
+    }
+  }
+
+  initializeComponents();
 
   function render(selection) {
     selection.each(function(model) {
@@ -975,12 +1005,6 @@ function expressionView(expr, keys) {
                   .html(d => exprHTML));
 
       if (valueType == "scalar") {
-        let scaleComponent = scalarView()
-          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
-          .height(12)
-          .fontSize(10),
-          mixingWeightComponent = mixingWeightView();
-
         expression.selectAll("span.scale-value").each(function(_) {
           const scaleValue = d3.select(this),
                 k = scaleValue.attr("data-key");
@@ -995,16 +1019,6 @@ function expressionView(expr, keys) {
             .call(mixingWeightComponent);
         });
       } else if (valueType == "scalarDistribution") {
-        let scaleComponent = scalarDistributionView()
-          .scale(d3.scaleLinear().domain([0, 2.5]).range([0, 200]))
-          .height(10)
-          .fontSize(10),
-           mixingWeightComponent = scalarDistributionView()
-          .scale(d3.scaleLinear().domain([0, 1]).range([0, 50]))
-          .fixedMax(1)
-          .height(10)
-          .fontSize(10);
-
           expression.selectAll("span.scale-value").each(function(_) {
             const scaleValue = d3.select(this),
                   k = scaleValue.attr("data-key");
@@ -1090,6 +1104,7 @@ function expressionView(expr, keys) {
   render.valueType = function(_) {
     if (!arguments.length) return valueType;
     valueType = _;
+    initializeComponents();
     return render;
   };
 

@@ -36,6 +36,10 @@ div.vexpr-output svg {{
 
 
 
+def time_control(class_name, labels=None):
+    labels_str = (f" labels: {repr(labels)},"
+                  if labels is not None
+                  else "")
 def time_control(class_name):
     return f"""
       (function() {{
@@ -48,7 +52,7 @@ def time_control(class_name):
                 }});
 
         renderTimeFunctions.push(function(min, max, curr) {{
-          d3.select(element).datum({{min: min, max: max, curr: curr}}).call(component);
+          d3.select(element).datum({{min: min, max: max, curr: curr,{labels_str}}}).call(component);
         }});
       }})();
     """
@@ -71,18 +75,26 @@ def position_view(class_name, key):
 def position_distribution_view(class_name, key):
     return f"""
       (function() {{
-        const element = container.querySelectorAll(".{class_name}")[0],
-              component = vexpr.scalarDistributionView()
-              .scale(d3.scaleLinear().domain([-1.5, 1.5]).range([0, 400]))
-              .fixedMin(-1.5)
-              .fixedMax(1.5)
-              .padRight(8)
+        const element = container.querySelectorAll(".{class_name}")[0];
+        renderTimestepFunctions.push(function (model) {{
+          const points = model["{key}"];
+          let min = d3.min(points),
+              max = d3.max(points);
+
+          if (min == max) {{
+            // Need a valid scale, so these need to be different.
+            // Visualize each point as a low value.
+            max += 1;
+          }}
+
+          const component = vexpr.scalarDistributionView()
+              .scale(d3.scaleLinear().domain([min, max]).range([0, 232]))
               .height(12)
               .fontSize(13)
-              .tfrac(2.7/3);
+              .useDataMin(true)
+              .useDataMax(true);
 
-        renderTimestepFunctions.push(function (model) {{
-          d3.select(element).datum(model["{key}"]).call(component);
+          d3.select(element).datum(points).call(component);
         }});
       }})();
     """
@@ -176,18 +188,25 @@ def scalar_view(class_name, key):
 def scalar_distribution_view(class_name, key):
     return f"""
       (function() {{
-        const element = container.querySelectorAll(".{class_name}")[0],
-              component = vexpr.scalarDistributionView()
-              .scale(d3.scaleLog().domain([1e-7, 5e0]).range([0, 400]))
-              .fixedMin(1e-7)
-              .exponentFormat(true)
-              .padRight(8)
-              .height(12)
-              .fontSize(13)
-              .tfrac(2.7/3);
-
+        const element = container.querySelectorAll(".{class_name}")[0];
         renderTimestepFunctions.push(function (model) {{
-          d3.select(element).datum(model["{key}"]).call(component);
+          const points = model["{key}"];
+          let min = d3.min(points),
+              max = d3.max(points);
+
+          if (min == max) {{
+            // Need a valid scale, so these need to be different.
+            // Visualize each point as a low value.
+            max *= 10;
+          }}
+
+          const component = vexpr.scalarDistributionView()
+              .scale(d3.scaleLog().domain([min, max]).range([0, 215]))
+              .exponentFormat(true)
+              .height(12)
+              .fontSize(13);
+
+          d3.select(element).datum(points).call(component);
         }});
       }})();
     """
