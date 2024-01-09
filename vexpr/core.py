@@ -190,13 +190,22 @@ value = lambda v: Vexpr(value_p, (v,), {})
 
 repr_impls = {}
 
+unquoted_string_p = Primitive("unquoted_string")
+unquoted_string = lambda s: Vexpr(unquoted_string_p, (s,), {})
+
+def comment_repr(s):
+    """
+    Users may reassign this function
+    """
+    return f"# {s}"
+
 
 def print_comments(repr_fn):
     def repr_fn_with_comments(expr):
         repr_txt = repr_fn(expr)
         if isinstance(expr, VexprWithMetadata) \
            and "comment" in expr.metadata:
-            repr_txt = f"\n# {expr.metadata['comment']}\n{repr_txt}"
+            repr_txt = f"\n {comment_repr(expr.metadata['comment'])}\n{repr_txt}"
         return repr_txt
     return repr_fn_with_comments
 
@@ -277,6 +286,7 @@ def infix_repr(separator):
 repr_impls.update({
     "default": default_vexpr_repr,
     symbol_p: lambda expr: expr.args[0],
+    unquoted_string_p: lambda expr: expr.args[0],
     operator_add_p: infix_repr("+"),
     operator_mul_p: infix_repr("*"),
     operator_truediv_p: infix_repr("/"),

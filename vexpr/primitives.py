@@ -10,4 +10,5 @@ from vexpr.core import (
     operator_neg_p,
     operator_getitem_p,
     value_p,
+    unquoted_string_p,
 )

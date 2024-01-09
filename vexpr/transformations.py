@@ -1,3 +1,4 @@
+import vexpr.primitives as p
 from vexpr.core import Vexpr
 
 
@@ -28,9 +29,12 @@ def bottom_up_transform_leafs_impl(transform, args):
         new_args = []
         for arg in args:
             if isinstance(arg, Vexpr):
-                arg = arg.new(arg.op,
-                              bottom_up_transform_leafs_impl(transform, arg.args),
-                              bottom_up_transform_leafs_impl(transform, arg.kwargs))
+                if arg.op == p.unquoted_string_p:
+                    pass
+                else:
+                    arg = arg.new(arg.op,
+                                  bottom_up_transform_leafs_impl(transform, arg.args),
+                                  bottom_up_transform_leafs_impl(transform, arg.kwargs))
             elif isinstance(arg, (list, tuple, dict)):
                 arg = bottom_up_transform_leafs_impl(transform, arg)
             else:
